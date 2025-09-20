@@ -235,8 +235,8 @@ router.get('/google/callback',
                               userAgent.includes('Android') ||
                               userAgent.includes('iPhone');
       
-      const redirectUrl = isMobileRequest 
-        ? `exp://192.168.1.102:8083/--/auth/callback?token=${token}&needsUsername=${!user.username}`
+      const redirectUrl = isMobileRequest
+        ? `${process.env.MOBILE_SUCCESS_URL || 'exp://192.168.1.185:8082/--/auth/callback'}?token=${token}&needsUsername=${!user.username}`
         : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/success?token=${token}&needsUsername=${!user.username}`
       
       
@@ -251,7 +251,7 @@ router.get('/google/callback',
                               userAgent.includes('Android') ||
                               userAgent.includes('iPhone');
       const errorUrl = isMobileRequest
-        ? `exp://192.168.1.102:8083/--/step3`
+        ? `${process.env.MOBILE_ERROR_URL || 'exp://192.168.1.185:8082/--/step3'}`
         : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/error`
       res.redirect(errorUrl)
     }
