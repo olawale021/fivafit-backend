@@ -62,7 +62,7 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => {
   console.log('🏥 Health check endpoint accessed')
   res.json({
-    message: 'FivaFit Backend API is running! 🚀',
+    message: 'STEPMODE Backend API is running! 🚀',
     status: 'healthy',
     timestamp: new Date().toISOString(),
     version: '1.0.0'
