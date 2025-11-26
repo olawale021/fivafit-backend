@@ -5,6 +5,10 @@ import session from 'express-session'
 import passport from 'passport'
 import { supabase } from './config/supabase.js'
 import authRoutes from './routes/auth.js'
+import aiRoutes from './routes/ai.js'
+import scanHistoryRoutes from './routes/scanHistory.js'
+import exerciseRoutes from './routes/exerciseRoutes.js'
+import workoutPlannerRoutes from './routes/workoutPlanner.js'
 
 // Load environment variables
 dotenv.config()
@@ -46,11 +50,11 @@ app.use(passport.session())
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString()
   console.log(`📝 [${timestamp}] ${req.method} ${req.url}`)
-  
+
   if (req.body && Object.keys(req.body).length > 0) {
     console.log(`📦 Request body:`, req.body)
   }
-  
+
   next()
 })
 
@@ -69,7 +73,7 @@ app.get('/', (req, res) => {
 app.get('/api/health/supabase', async (req, res) => {
   try {
     console.log('🔍 Testing Supabase connection...')
-    
+
     // Test the connection by checking if Supabase client is configured
     const { data, error } = await supabase.auth.admin.listUsers({
       page: 1,
@@ -104,6 +108,10 @@ app.get('/api/health/supabase', async (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes)
+app.use('/api/ai', aiRoutes)
+app.use('/api/scan-history', scanHistoryRoutes)
+app.use('/api/exercises', exerciseRoutes)
+app.use('/api/workout-planner', workoutPlannerRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -156,7 +164,7 @@ app.listen(PORT, () => {
   console.log('   🔐 POST /api/auth/verify         - Verify JWT token')
   console.log('   🔄 POST /api/auth/refresh        - Refresh token')
   console.log('🚀 ======================================\n')
-  
+
   // Test Supabase connection on startup
   console.log('🔍 Testing initial Supabase connection...')
   supabase.auth.admin.listUsers({
