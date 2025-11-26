@@ -71,6 +71,7 @@ export async function generatePlanPreview(req, res) {
     const {
       fitness_goals,
       target_body_parts,
+      fitness_level,
       days_per_week,
       hours_per_session,
       selected_days
@@ -100,6 +101,7 @@ export async function generatePlanPreview(req, res) {
       userId,
       fitness_goals,
       target_body_parts,
+      fitness_level,
       days_per_week,
       hours_per_session,
       selected_days

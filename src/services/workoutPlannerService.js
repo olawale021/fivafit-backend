@@ -81,6 +81,18 @@ export async function generateWeeklyPlan({
     });
 
     console.log(`✅ AI generated plan: ${aiPlanStructure.plan_name}`);
+
+    // Check if warm-up exercises were generated
+    const warmUpCounts = aiPlanStructure.daily_workouts.map((day, idx) => ({
+      day: idx + 1,
+      warmUps: day.warm_up_exercises?.length || 0
+    }));
+    console.log(`🔥 Warm-up exercises per day:`, warmUpCounts);
+
+    if (warmUpCounts.some(d => d.warmUps === 0)) {
+      console.warn(`⚠️  Some days missing warm-up exercises!`);
+    }
+
     console.log(`📅 Step 4: Fetching full exercise details from database...`);
 
     // Extract all exercise IDs from AI response
@@ -172,6 +184,17 @@ export async function generatePlanPreview({
       },
       availableExercises: exerciseMetadata
     });
+
+    // Check if warm-up exercises were generated
+    const warmUpCounts = aiPlanStructure.daily_workouts.map((day, idx) => ({
+      day: idx + 1,
+      warmUps: day.warm_up_exercises?.length || 0
+    }));
+    console.log(`🔥 Warm-up exercises per day (preview):`, warmUpCounts);
+
+    if (warmUpCounts.some(d => d.warmUps === 0)) {
+      console.warn(`⚠️  AI did not generate warm-up exercises for some days!`);
+    }
 
     // For each exercise in the plan, find 2 alternatives
     console.log(`🔄 Finding exercise alternatives...`);
@@ -289,12 +312,13 @@ async function addExerciseAlternatives(aiPlan, availableExercises) {
 }
 
 /**
- * Extract all exercise IDs including alternatives
+ * Extract all exercise IDs including alternatives and warm-up exercises
  */
 function extractAllExerciseIdsWithAlternatives(dailyWorkouts) {
   const exerciseIds = new Set();
 
   dailyWorkouts.forEach(day => {
+    // Main exercises
     day.exercises.forEach(ex => {
       if (ex.exercise_id) {
         exerciseIds.add(ex.exercise_id);
@@ -303,6 +327,15 @@ function extractAllExerciseIdsWithAlternatives(dailyWorkouts) {
         ex.alternatives.forEach(altId => exerciseIds.add(altId));
       }
     });
+
+    // Warm-up exercises
+    if (day.warm_up_exercises && Array.isArray(day.warm_up_exercises)) {
+      day.warm_up_exercises.forEach(ex => {
+        if (ex.exercise_id) {
+          exerciseIds.add(ex.exercise_id);
+        }
+      });
+    }
   });
 
   return Array.from(exerciseIds);
@@ -364,6 +397,31 @@ function buildPlanPreviewWithExerciseData(aiPlan, fullExercises, preferences) {
       };
     }).filter(Boolean);
 
+    // Process warm-up exercises
+    const warmUpExercisesWithFullData = (day.warm_up_exercises || []).map(exerciseRef => {
+      const warmUpExercise = exerciseMap[exerciseRef.exercise_id];
+      if (!warmUpExercise) return null;
+
+      return {
+        id: warmUpExercise.id,
+        name: warmUpExercise.name,
+        bodyPart: warmUpExercise.bodyPart,
+        target: warmUpExercise.target,
+        equipment: warmUpExercise.equipment,
+        difficulty: warmUpExercise.difficulty,
+        category: warmUpExercise.category,
+        image_url: warmUpExercise.image_url,
+        secondary_muscles: warmUpExercise.secondary_muscles || [],
+        instructions: warmUpExercise.instructions || [],
+        description: warmUpExercise.description,
+        // Workout-specific data from AI
+        sets: exerciseRef.sets || 1,
+        reps: exerciseRef.reps || '10-15',
+        rest_seconds: exerciseRef.rest_seconds || 30,
+        notes: exerciseRef.notes || 'Light warm-up'
+      };
+    }).filter(Boolean);
+
     return {
       day_order: day.day_order,
       day_of_week: day.day_of_week,
@@ -373,6 +431,7 @@ function buildPlanPreviewWithExerciseData(aiPlan, fullExercises, preferences) {
       target_muscles: day.target_muscles || [],
       estimated_duration_minutes: day.estimated_duration_minutes,
       exercises: exercisesWithFullData,
+      warm_up_exercises: warmUpExercisesWithFullData,
       warm_up: day.warm_up,
       cool_down: day.cool_down,
       workout_tips: day.workout_tips
@@ -465,34 +524,68 @@ function applyUserExerciseChoices(planPreview, userChoices) {
 
 /**
  * Fetch exercises filtered by user's target body parts
+ * Also includes bodyweight/band exercises for warm-up
  * Reduces the number of exercises sent to AI
  */
 async function fetchExercisesForPlanner(target_body_parts, fitnessLevel) {
   try {
-    // Build query to fetch exercises matching target body parts
-    let query = supabase
+    // Fetch main exercises matching target body parts
+    let mainQuery = supabase
       .from('exercises')
       .select('id, name, bodyPart, target, equipment, difficulty, category, secondary_muscles');
 
     // Filter by body parts (case insensitive)
     if (target_body_parts && target_body_parts.length > 0) {
-      query = query.or(
+      mainQuery = mainQuery.or(
         target_body_parts.map(bp => `bodyPart.ilike.%${bp}%`).join(',')
       );
     }
 
     // Prioritize beginner-friendly exercises for beginners
     if (fitnessLevel === 'beginner') {
-      query = query.in('difficulty', ['beginner', 'intermediate']);
+      mainQuery = mainQuery.in('difficulty', ['beginner', 'intermediate']);
     }
 
-    const { data, error } = await query
+    const { data: mainExercises, error: mainError } = await mainQuery
       .order('difficulty')
-      .limit(200); // Reasonable limit to avoid token overflow
+      .limit(180); // Reduced limit to make room for warm-up exercises
 
-    if (error) throw error;
+    if (mainError) throw mainError;
 
-    return data || [];
+    // Fetch additional warm-up exercises (bodyweight, band, assisted)
+    const { data: warmUpExercises, error: warmUpError } = await supabase
+      .from('exercises')
+      .select('id, name, bodyPart, target, equipment, difficulty, category, secondary_muscles')
+      .in('equipment', ['body weight', 'assisted', 'band'])
+      .in('difficulty', ['beginner'])
+      .limit(30);
+
+    if (warmUpError) {
+      console.warn('Could not fetch warm-up exercises:', warmUpError);
+    }
+
+    // Combine and deduplicate
+    const allExercises = [...(mainExercises || [])];
+    const exerciseIds = new Set(allExercises.map(ex => ex.id));
+
+    // Add warm-up exercises that aren't already included
+    (warmUpExercises || []).forEach(ex => {
+      if (!exerciseIds.has(ex.id)) {
+        allExercises.push(ex);
+        exerciseIds.add(ex.id);
+      }
+    });
+
+    const warmUpCount = warmUpExercises?.length || 0;
+    console.log(`📊 Fetched ${allExercises.length} exercises (${mainExercises?.length || 0} main + ${warmUpCount} warm-up)`);
+
+    if (warmUpCount === 0) {
+      console.warn('⚠️  No warm-up exercises found! Check equipment values in database.');
+    } else {
+      console.log(`✅ Warm-up exercises available:`, warmUpExercises.slice(0, 5).map(ex => `${ex.name} (${ex.equipment})`));
+    }
+
+    return allExercises;
   } catch (error) {
     console.error('Error fetching exercises for planner:', error);
     // Return empty array on error - AI will still work
@@ -503,11 +596,13 @@ async function fetchExercisesForPlanner(target_body_parts, fitnessLevel) {
 /**
  * Extract all unique exercise IDs from daily workouts
  * Handles both AI-generated format (exercise_id) and finalized format (id)
+ * Also extracts warm_up_exercise IDs
  */
 function extractExerciseIds(dailyWorkouts) {
   const exerciseIds = new Set();
 
   dailyWorkouts.forEach(day => {
+    // Main exercises
     day.exercises.forEach(ex => {
       // Handle both formats: exercise_id (from AI) and id (from finalized plan)
       const exerciseId = ex.exercise_id || ex.id;
@@ -515,6 +610,16 @@ function extractExerciseIds(dailyWorkouts) {
         exerciseIds.add(exerciseId);
       }
     });
+
+    // Warm-up exercises
+    if (day.warm_up_exercises && Array.isArray(day.warm_up_exercises)) {
+      day.warm_up_exercises.forEach(ex => {
+        const exerciseId = ex.exercise_id || ex.id;
+        if (exerciseId) {
+          exerciseIds.add(exerciseId);
+        }
+      });
+    }
   });
 
   return Array.from(exerciseIds);
@@ -589,9 +694,42 @@ function buildPlanWithExerciseData(aiPlan, fullExercises) {
       };
     }).filter(ex => ex !== null); // Remove null entries
 
+    // Process warm-up exercises
+    const warmUpExercisesWithFullData = (day.warm_up_exercises || []).map(exerciseRef => {
+      const exerciseId = exerciseRef.exercise_id || exerciseRef.id;
+      const fullExercise = exerciseMap[exerciseId];
+
+      if (!fullExercise) {
+        console.warn(`⚠️  Warm-up exercise ${exerciseId} not found in database`);
+        return null;
+      }
+
+      return {
+        // Exercise details from database
+        id: fullExercise.id,
+        name: fullExercise.name,
+        bodyPart: fullExercise.bodyPart,
+        target: fullExercise.target,
+        equipment: fullExercise.equipment,
+        difficulty: fullExercise.difficulty,
+        category: fullExercise.category,
+        image_url: fullExercise.image_url,
+        secondary_muscles: fullExercise.secondary_muscles,
+        instructions: fullExercise.instructions,
+        description: fullExercise.description,
+
+        // AI-generated workout parameters
+        sets: exerciseRef.sets || 1,
+        reps: exerciseRef.reps || '10-15',
+        rest_seconds: exerciseRef.rest_seconds || 30,
+        notes: exerciseRef.notes || 'Light warm-up'
+      };
+    }).filter(ex => ex !== null);
+
     return {
       ...day,
-      exercises: exercisesWithFullData
+      exercises: exercisesWithFullData,
+      warm_up_exercises: warmUpExercisesWithFullData
     };
   });
 
@@ -650,6 +788,7 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
       target_muscles: day.target_muscles,
       estimated_duration_minutes: day.estimated_duration_minutes,
       exercises: day.exercises, // Store full exercise data as JSONB
+      warm_up_exercises: day.warm_up_exercises || [], // Store warm-up exercises with full details
       warm_up: day.warm_up,
       cool_down: day.cool_down,
       workout_tips: day.workout_tips

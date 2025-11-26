@@ -363,7 +363,7 @@ export async function generateWorkoutPlanWithAI({
         messages: [
           {
             role: 'system',
-            content: 'You are an expert certified personal trainer with over 15 years of experience in creating personalized workout programs. You understand biomechanics, progressive overload, periodization, and individual adaptation. Always respond with valid JSON following the exact structure provided. CRITICAL: You must generate the EXACT number of daily workouts requested, no more, no less.'
+            content: 'You are an expert certified personal trainer with over 15 years of experience in creating personalized workout programs. You understand biomechanics, progressive overload, periodization, and individual adaptation. IMPORTANT: When creating plan names, make them descriptive and motivating based on the workout goals and focus areas. DO NOT include fitness level words like "Beginner", "Intermediate", or "Advanced" in the plan name. DO NOT use emojis. Always respond with valid JSON following the exact structure provided. CRITICAL: You must generate the EXACT number of daily workouts requested, no more, no less.'
           },
           {
             role: 'user',
@@ -497,7 +497,13 @@ INSTRUCTIONS:
 7. For each day, select 4-7 exercises that work well together
 8. Vary the exercises throughout the week for balanced development
 9. Consider the user's fitness level (${fitnessLevel}) when choosing exercise difficulty
-10. Provide warm-up, cool-down, and workout tips for each day
+10. Provide warm-up exercises (2-3 exercises from available list), cool-down, and workout tips for each day
+
+WARM-UP EXERCISE SELECTION:
+- Select 2-3 light, dynamic exercises from the available exercises list for warm-up
+- Choose exercises that prepare the muscles for the workout (target similar body parts)
+- Prefer bodyweight, band, or light dumbbell exercises for warm-up
+- Warm-up exercises should be easier/lighter than main workout exercises
 
 WORKOUT PLAN STRUCTURE:
 - For ${fitness_goals.includes('lose_weight') ? 'weight loss' : fitness_goals.includes('gain_muscle') ? 'muscle gain' : 'general fitness'}, structure workouts accordingly
@@ -507,7 +513,7 @@ WORKOUT PLAN STRUCTURE:
 
 OUTPUT FORMAT (VALID JSON):
 {
-  "plan_name": "Descriptive plan name (e.g., '${days_per_week}-Day Upper Body Muscle Building Plan')",
+  "plan_name": "A descriptive and motivating plan name that reflects the workout goals and focus areas. DO NOT include words like 'Beginner', 'Intermediate', or 'Advanced'. DO NOT use emojis. Examples: 'Total Body Transformation', 'Strength & Power Program', 'Lean Muscle Builder', 'Athletic Performance Plan'",
   "description": "2-3 sentence overview of the plan and its benefits for this user",
   "daily_workouts": [
     ${selected_days && selected_days.length > 0 ? selected_days.map((day, index) => `{
@@ -528,7 +534,16 @@ OUTPUT FORMAT (VALID JSON):
           "notes": "Specific cues for this exercise in this workout"
         }
       ],
-      "warm_up": "5-10 min warm-up recommendations specific to this workout",
+      "warm_up_exercises": [
+        {
+          "exercise_id": "ex_456",
+          "sets": 1,
+          "reps": "10-15",
+          "rest_seconds": 30,
+          "notes": "Light warm-up, focus on mobility"
+        }
+      ],
+      "warm_up": "Optional additional warm-up tips (5 min light cardio, joint mobilization, etc.)",
       "cool_down": "5-10 min cool-down and stretching for muscles worked",
       "workout_tips": "2-3 sentences of coaching tips for getting the most out of this workout"
     }`).join(',\n    ') : `{
@@ -549,7 +564,16 @@ OUTPUT FORMAT (VALID JSON):
           "notes": "Specific cues for this exercise in this workout"
         }
       ],
-      "warm_up": "5-10 min warm-up recommendations specific to this workout",
+      "warm_up_exercises": [
+        {
+          "exercise_id": "ex_456",
+          "sets": 1,
+          "reps": "10-15",
+          "rest_seconds": 30,
+          "notes": "Light warm-up, focus on mobility"
+        }
+      ],
+      "warm_up": "Optional additional warm-up tips (5 min light cardio, joint mobilization, etc.)",
       "cool_down": "5-10 min cool-down and stretching for muscles worked",
       "workout_tips": "2-3 sentences of coaching tips for getting the most out of this workout"
     }`}
@@ -557,25 +581,34 @@ OUTPUT FORMAT (VALID JSON):
 }
 
 🚨 CRITICAL REQUIREMENTS - FAILURE TO COMPLY WILL RESULT IN REJECTION:
-1. ONLY use exercise IDs from the AVAILABLE EXERCISES list - do NOT make up exercise IDs
-2. Each day should have 4-7 exercises total
-3. Warm-up and cool-down time is INCLUDED in the estimated_duration_minutes
-4. **MANDATORY: Create EXACTLY ${days_per_week} daily_workouts** - NO MORE, NO LESS
-5. ${selected_days && selected_days.length > 0 ? `**MANDATORY: Include ALL these days: ${selected_days.join(', ')}** - DO NOT SKIP ANY` : 'Use flexible scheduling'}
-6. Ensure exercises are balanced and complement each other
-7. Consider muscle recovery - don't train the same muscle groups on consecutive days
-8. Make each workout unique and progressive
-9. Return ONLY valid JSON, no markdown formatting
-10. **MANDATORY: The daily_workouts array MUST contain EXACTLY ${days_per_week} objects**
+1. **plan_name: DO NOT include 'Beginner', 'Intermediate', or 'Advanced' words. DO NOT use emojis.**
+2. ONLY use exercise IDs from the AVAILABLE EXERCISES list - do NOT make up exercise IDs (this applies to BOTH exercises and warm_up_exercises)
+3. Each day should have 4-7 main exercises + 2-3 warm-up exercises
+4. Warm-up and cool-down time is INCLUDED in the estimated_duration_minutes
+5. **MANDATORY: Include 2-3 warm_up_exercises for each day** - select from available exercises list
+6. **MANDATORY: Create EXACTLY ${days_per_week} daily_workouts** - NO MORE, NO LESS
+7. ${selected_days && selected_days.length > 0 ? `**MANDATORY: Include ALL these days: ${selected_days.join(', ')}** - DO NOT SKIP ANY` : 'Use flexible scheduling'}
+8. Ensure exercises are balanced and complement each other
+9. Consider muscle recovery - don't train the same muscle groups on consecutive days
+10. Make each workout unique and progressive
+11. Return ONLY valid JSON, no markdown formatting
+12. **MANDATORY: The daily_workouts array MUST contain EXACTLY ${days_per_week} objects**
 
 ${selected_days && selected_days.length > 0 ? `
 VERIFICATION CHECKLIST (You MUST verify before responding):
 ✓ Does daily_workouts array have ${days_per_week} items?
 ✓ Does it include workouts for: ${selected_days.join(', ')}?
 ✓ Are all ${days_per_week} workouts present?
+✓ Does EACH workout have 2-3 warm_up_exercises?
 
 If ANY answer is NO, fix the plan before returning it.
-` : ''}
+` : `
+VERIFICATION CHECKLIST (You MUST verify before responding):
+✓ Does daily_workouts array have ${days_per_week} items?
+✓ Does EACH workout have 2-3 warm_up_exercises?
+
+If ANY answer is NO, fix the plan before returning it.
+`}
 
 Generate the complete ${days_per_week}-day workout plan now. Your response MUST include ALL ${days_per_week} days: ${selected_days && selected_days.length > 0 ? selected_days.join(', ') : `${days_per_week} workouts`}.`;
 }
