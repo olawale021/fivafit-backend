@@ -151,6 +151,12 @@ router.post('/complete/:dailyWorkoutId', workoutPlannerController.completeDailyW
  */
 router.put('/complete/:dailyWorkoutId/update', workoutPlannerController.updateWorkoutCompletion);
 
+/**
+ * GET /api/workout-planner/completion/:dailyWorkoutId
+ * Get workout completion by daily workout ID
+ */
+router.get('/completion/:dailyWorkoutId', workoutPlannerController.getWorkoutCompletionByDailyWorkoutId);
+
 // ============================================================================
 // PROGRESS & STATS
 // ============================================================================

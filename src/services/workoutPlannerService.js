@@ -1402,6 +1402,30 @@ export async function getWorkoutHistory(userId, limit = 10, offset = 0) {
   }
 }
 
+/**
+ * Get workout completion by daily workout ID
+ */
+export async function getWorkoutCompletionByDailyWorkoutId(dailyWorkoutId, userId) {
+  try {
+    const { data, error } = await supabase
+      .from('workout_completions')
+      .select('*')
+      .eq('daily_workout_id', dailyWorkoutId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error fetching workout completion:', error);
+    throw error;
+  }
+}
+
 // ============================================================================
 // USER PREFERENCES
 // ============================================================================

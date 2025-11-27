@@ -9,6 +9,7 @@ import aiRoutes from './routes/ai.js'
 import scanHistoryRoutes from './routes/scanHistory.js'
 import exerciseRoutes from './routes/exerciseRoutes.js'
 import workoutPlannerRoutes from './routes/workoutPlanner.js'
+import postsRoutes from './routes/posts.js'
 
 // Load environment variables
 dotenv.config()
@@ -112,6 +113,7 @@ app.use('/api/ai', aiRoutes)
 app.use('/api/scan-history', scanHistoryRoutes)
 app.use('/api/exercises', exerciseRoutes)
 app.use('/api/workout-planner', workoutPlannerRoutes)
+app.use('/api/posts', postsRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -151,19 +153,6 @@ app.listen(PORT, () => {
   console.log('🚀 ======================================')
   console.log(`📍 Server running on: http://localhost:${PORT}`)
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`)
-  console.log(`🔗 Supabase URL: ${process.env.SUPABASE_URL}`)
-  console.log('📋 Available endpoints:')
-  console.log('   🏥 GET  /                        - Health check')
-  console.log('   🔍 GET  /api/health/supabase     - Supabase connection test')
-  console.log('   📝 POST /api/auth/register       - Register with username/password')
-  console.log('   🔑 POST /api/auth/login          - Login with username/email')
-  console.log('   🔐 GET  /api/auth/google         - Google OAuth login')
-  console.log('   👤 POST /api/auth/setup-username - Setup username for Google users')
-  console.log('   👤 GET  /api/auth/profile        - Get user profile')
-  console.log('   📝 PUT  /api/auth/profile        - Update user profile')
-  console.log('   🔐 POST /api/auth/verify         - Verify JWT token')
-  console.log('   🔄 POST /api/auth/refresh        - Refresh token')
-  console.log('🚀 ======================================\n')
 
   // Test Supabase connection on startup
   console.log('🔍 Testing initial Supabase connection...')

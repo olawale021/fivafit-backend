@@ -46,3 +46,6 @@ Thumbs.db
 # Build directories
 dist/
 build/
+database_migration_multiple_images.sql
+migrations/add_atomic_like_functions.sql
+migrations/remove_image_url_field.sql
