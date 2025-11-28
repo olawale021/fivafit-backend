@@ -777,7 +777,40 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
 
     console.log(`✅ Created workout_plans record: ${plan.id}`);
 
-    // Create daily workouts
+    // Calculate scheduled dates for each workout
+    const calculateScheduledDate = (dayOfWeek, weekNumber) => {
+      const planStartDate = new Date(plan.started_at);
+      const dayNameToIndex = {
+        'sunday': 0,
+        'monday': 1,
+        'tuesday': 2,
+        'wednesday': 3,
+        'thursday': 4,
+        'friday': 5,
+        'saturday': 6
+      };
+
+      const targetDayIndex = dayNameToIndex[dayOfWeek?.toLowerCase()];
+      if (targetDayIndex === undefined) return null;
+
+      // Find the first occurrence of the target day from plan start date
+      const currentDayIndex = planStartDate.getDay();
+      let daysUntilFirstOccurrence = targetDayIndex - currentDayIndex;
+      if (daysUntilFirstOccurrence < 0) {
+        daysUntilFirstOccurrence += 7;
+      }
+
+      // Add weeks offset
+      const totalDaysOffset = daysUntilFirstOccurrence + ((weekNumber - 1) * 7);
+
+      const scheduledDate = new Date(planStartDate);
+      scheduledDate.setDate(planStartDate.getDate() + totalDaysOffset);
+
+      // Return in YYYY-MM-DD format for PostgreSQL DATE type
+      return scheduledDate.toISOString().split('T')[0];
+    };
+
+    // Create daily workouts with scheduled dates
     const dailyWorkoutsToInsert = completePlan.daily_workouts.map((day, index) => ({
       workout_plan_id: plan.id,
       day_of_week: day.day_of_week,
@@ -791,7 +824,8 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
       warm_up_exercises: day.warm_up_exercises || [], // Store warm-up exercises with full details
       warm_up: day.warm_up,
       cool_down: day.cool_down,
-      workout_tips: day.workout_tips
+      workout_tips: day.workout_tips,
+      scheduled_date: calculateScheduledDate(day.day_of_week, day.week_number || 1)
     }));
 
     const { data: dailyWorkouts, error: dailyError } = await supabase
@@ -971,14 +1005,30 @@ export async function activatePlan(planId, userId) {
     // Business Logic: Deactivate all other plans first
     await deactivateAllUserPlans(userId);
 
+    // Get the plan to check if it has been started before
+    const { data: existingPlan, error: fetchError } = await supabase
+      .from('workout_plans')
+      .select('started_at')
+      .eq('id', planId)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Only set started_at if it hasn't been set before
+    const updateData = {
+      is_active: true,
+      updated_at: new Date().toISOString()
+    };
+
+    if (!existingPlan.started_at) {
+      updateData.started_at = new Date().toISOString();
+    }
+
     // Activate this plan
     const { data, error } = await supabase
       .from('workout_plans')
-      .update({
-        is_active: true,
-        started_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', planId)
       .eq('user_id', userId)
       .select()
@@ -1116,6 +1166,7 @@ export async function getDailyWorkoutByDay(planId, dayOrder, userId) {
 
 /**
  * Get the next incomplete workout
+ * Smart detection: Returns today's workout, or tomorrow's if today is done/none scheduled
  */
 export async function getNextIncompleteWorkout(planId, userId) {
   try {
@@ -1123,7 +1174,49 @@ export async function getNextIncompleteWorkout(planId, userId) {
     const plan = await getPlanById(planId, userId);
     if (!plan) return null;
 
-    const { data, error } = await supabase
+    // Get today's and tomorrow's dates
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = today.toISOString().split('T')[0];
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+    // First, try to get today's incomplete workout
+    const { data: todayWorkout, error: todayError } = await supabase
+      .from('daily_workouts')
+      .select('*')
+      .eq('workout_plan_id', planId)
+      .eq('is_completed', false)
+      .eq('scheduled_date', todayStr)
+      .order('day_order')
+      .limit(1)
+      .single();
+
+    // If there's an incomplete workout for today, return it
+    if (todayWorkout) {
+      return todayWorkout;
+    }
+
+    // No workout today (or today's workout is completed), get tomorrow's or next upcoming
+    const { data: upcomingWorkout, error: upcomingError } = await supabase
+      .from('daily_workouts')
+      .select('*')
+      .eq('workout_plan_id', planId)
+      .eq('is_completed', false)
+      .gte('scheduled_date', tomorrowStr) // Tomorrow or later
+      .order('scheduled_date')
+      .order('day_order')
+      .limit(1)
+      .single();
+
+    if (upcomingWorkout) {
+      return upcomingWorkout;
+    }
+
+    // No upcoming workouts found, check if there are any incomplete workouts at all (past dates)
+    const { data: anyIncomplete, error: anyError } = await supabase
       .from('daily_workouts')
       .select('*')
       .eq('workout_plan_id', planId)
@@ -1132,12 +1225,13 @@ export async function getNextIncompleteWorkout(planId, userId) {
       .limit(1)
       .single();
 
-    if (error) {
-      if (error.code === 'PGRST116') return null;
-      throw error;
+    if (anyError && anyError.code === 'PGRST116') {
+      return null; // No incomplete workouts at all
     }
+    if (anyError) throw anyError;
 
-    return data;
+    // Return the first incomplete workout even if it's in the past
+    return anyIncomplete;
   } catch (error) {
     console.error('Error fetching next workout:', error);
     throw error;
@@ -1411,6 +1505,30 @@ export async function getWorkoutCompletionByDailyWorkoutId(dailyWorkoutId, userI
       .from('workout_completions')
       .select('*')
       .eq('daily_workout_id', dailyWorkoutId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error fetching workout completion:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get workout completion by completion ID
+ */
+export async function getWorkoutCompletionById(completionId, userId) {
+  try {
+    const { data, error } = await supabase
+      .from('workout_completions')
+      .select('*')
+      .eq('id', completionId)
       .eq('user_id', userId)
       .single();
 

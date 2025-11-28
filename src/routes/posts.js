@@ -6,10 +6,18 @@ import {
   uploadImages,
   createPost,
   getFeed,
+  getFollowingFeed,
   likePost,
   unlikePost,
   getPost,
-  deletePost
+  deletePost,
+  getUserPosts,
+  addComment,
+  getComments,
+  deleteComment,
+  savePost,
+  unsavePost,
+  getSavedPosts
 } from '../controllers/postsController.js'
 
 const router = express.Router()
@@ -42,6 +50,12 @@ router.post('/', authenticateToken, createPost)
 // Get feed (optional auth - shows liked status if authenticated)
 router.get('/feed', optionalAuth, getFeed)
 
+// Get following feed (requires auth - shows posts from followed users only)
+router.get('/following', authenticateToken, getFollowingFeed)
+
+// Get posts by specific user (optional auth)
+router.get('/user/:userId', optionalAuth, getUserPosts)
+
 // Get single post (optional auth)
 router.get('/:postId', optionalAuth, getPost)
 
@@ -53,5 +67,20 @@ router.delete('/:postId/like', authenticateToken, unlikePost)
 
 // Delete post (requires auth)
 router.delete('/:postId', authenticateToken, deletePost)
+
+// Get comments for a post
+router.get('/:postId/comments', getComments)
+
+// Add comment to a post (requires auth)
+router.post('/:postId/comments', authenticateToken, addComment)
+
+// Delete a comment (requires auth)
+router.delete('/comments/:commentId', authenticateToken, deleteComment)
+
+// Save post (requires auth)
+router.post('/:postId/save', authenticateToken, savePost)
+
+// Unsave post (requires auth)
+router.delete('/:postId/save', authenticateToken, unsavePost)
 
 export default router

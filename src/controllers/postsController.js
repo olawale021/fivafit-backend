@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js'
 import sharp from 'sharp'
+import { createLikeNotification, createCommentNotification, createReplyNotification, deleteNotification } from '../services/notificationService.js'
 
 /**
  * Upload post image to Supabase Storage (single image - backward compatibility)
@@ -302,11 +303,12 @@ export const getFeed = async (req, res) => {
       throw error
     }
 
-    // If user is authenticated, check which posts they liked
-    let postsWithLikeStatus = data
+    // If user is authenticated, check which posts they liked and saved
+    let postsWithFlags = data
     if (userId) {
       const postIds = data.map(p => p.id)
 
+      // Check likes
       const { data: likes } = await supabase
         .from('post_likes')
         .select('post_id')
@@ -315,9 +317,19 @@ export const getFeed = async (req, res) => {
 
       const likedPostIds = new Set(likes?.map(l => l.post_id) || [])
 
-      postsWithLikeStatus = data.map(post => ({
+      // Check saves
+      const { data: saves } = await supabase
+        .from('post_saves')
+        .select('post_id')
+        .eq('user_id', userId)
+        .in('post_id', postIds)
+
+      const savedPostIds = new Set(saves?.map(s => s.post_id) || [])
+
+      postsWithFlags = data.map(post => ({
         ...post,
-        liked_by_me: likedPostIds.has(post.id)
+        liked_by_me: likedPostIds.has(post.id),
+        saved_by_me: savedPostIds.has(post.id)
       }))
     }
 
@@ -325,13 +337,111 @@ export const getFeed = async (req, res) => {
 
     res.json({
       success: true,
-      data: postsWithLikeStatus
+      data: postsWithFlags
     })
   } catch (error) {
     console.error('❌ Get feed error:', error)
     res.status(500).json({
       success: false,
       error: 'Failed to fetch feed',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get following feed - posts from users the current user follows
+ * GET /api/posts/following?page=0&limit=20
+ */
+export const getFollowingFeed = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 0
+    const limit = parseInt(req.query.limit) || 20
+    const userId = req.user.id // Required - must be authenticated
+
+    console.log(`📱 Fetching following feed for user ${userId}: page ${page}, limit ${limit}`)
+
+    // First, get list of users that current user follows
+    const { data: follows, error: followsError } = await supabase
+      .from('user_follows')
+      .select('following_id')
+      .eq('follower_id', userId)
+
+    if (followsError) {
+      console.error('❌ Error fetching follows:', followsError)
+      throw followsError
+    }
+
+    const followingIds = follows.map(f => f.following_id)
+
+    // If not following anyone, return empty feed
+    if (followingIds.length === 0) {
+      return res.json({
+        success: true,
+        data: []
+      })
+    }
+
+    // Get posts from followed users
+    const { data, error } = await supabase
+      .from('posts')
+      .select(`
+        *,
+        user:users (
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('visibility', 'public')
+      .in('user_id', followingIds)
+      .order('created_at', { ascending: false })
+      .range(page * limit, (page + 1) * limit - 1)
+
+    if (error) {
+      console.error('❌ Following feed fetch error:', error)
+      throw error
+    }
+
+    // Check which posts user liked and saved
+    const postIds = data.map(p => p.id)
+
+    // Check likes
+    const { data: likes } = await supabase
+      .from('post_likes')
+      .select('post_id')
+      .eq('user_id', userId)
+      .in('post_id', postIds)
+
+    const likedPostIds = new Set(likes?.map(l => l.post_id) || [])
+
+    // Check saves
+    const { data: saves } = await supabase
+      .from('post_saves')
+      .select('post_id')
+      .eq('user_id', userId)
+      .in('post_id', postIds)
+
+    const savedPostIds = new Set(saves?.map(s => s.post_id) || [])
+
+    const postsWithFlags = data.map(post => ({
+      ...post,
+      liked_by_me: likedPostIds.has(post.id),
+      saved_by_me: savedPostIds.has(post.id)
+    }))
+
+    console.log(`✅ Found ${data.length} posts from followed users`)
+
+    res.json({
+      success: true,
+      data: postsWithFlags
+    })
+  } catch (error) {
+    console.error('❌ Get following feed error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch following feed',
       message: error.message
     })
   }
@@ -403,6 +513,17 @@ export const likePost = async (req, res) => {
       console.log('✅ RPC increment succeeded:', rpcData)
     }
 
+    // Create notification for post author (if not liking own post)
+    const { data: post } = await supabase
+      .from('posts')
+      .select('user_id')
+      .eq('id', postId)
+      .single()
+
+    if (post) {
+      await createLikeNotification(post.user_id, userId, postId)
+    }
+
     console.log(`✅ Post liked successfully`)
 
     res.json({
@@ -449,6 +570,13 @@ export const unlikePost = async (req, res) => {
       console.error('❌ Failed to decrement likes count:', decrementError)
       throw decrementError
     }
+
+    // Delete the like notification
+    await deleteNotification({
+      actorId: userId,
+      type: 'like',
+      postId
+    })
 
     console.log(`✅ Post unliked successfully`)
 
@@ -619,6 +747,617 @@ export const deletePost = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to delete post',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get posts by specific user
+ * GET /api/posts/user/:userId
+ */
+export const getUserPosts = async (req, res) => {
+  try {
+    const { userId } = req.params
+    const { limit = 20, cursor } = req.query
+    const currentUserId = req.user?.id
+
+    console.log(`📖 Fetching posts for user: ${userId}, limit: ${limit}`)
+
+    // Build query
+    let query = supabase
+      .from('posts')
+      .select(`
+        id,
+        user_id,
+        workout_completion_id,
+        workout_name,
+        caption,
+        image_urls,
+        stats,
+        likes_count,
+        comments_count,
+        visibility,
+        created_at,
+        updated_at,
+        user:users!posts_user_id_fkey(
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit))
+
+    // Apply cursor for pagination
+    if (cursor) {
+      query = query.lt('created_at', cursor)
+    }
+
+    const { data: posts, error } = await query
+
+    if (error) {
+      console.error('❌ Supabase query error:', error)
+      throw error
+    }
+
+    // If user is authenticated, check which posts they liked
+    let likedPostIds = []
+    if (currentUserId) {
+      const { data: likes } = await supabase
+        .from('post_likes')
+        .select('post_id')
+        .eq('user_id', currentUserId)
+        .in('post_id', posts.map(p => p.id))
+
+      likedPostIds = likes ? likes.map(l => l.post_id) : []
+    }
+
+    // Add liked_by_me flag to each post
+    const postsWithLikes = posts.map(post => ({
+      ...post,
+      liked_by_me: likedPostIds.includes(post.id)
+    }))
+
+    console.log(`✅ Found ${posts.length} posts for user ${userId}`)
+
+    res.json({
+      success: true,
+      data: {
+        posts: postsWithLikes,
+        nextCursor: posts.length === parseInt(limit)
+          ? posts[posts.length - 1].created_at
+          : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get user posts error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch user posts',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Add a comment to a post (or reply to a comment)
+ * POST /api/posts/:postId/comments
+ * Body: { commentText, parentCommentId? }
+ */
+export const addComment = async (req, res) => {
+  try {
+    const { postId } = req.params
+    const { commentText, parentCommentId } = req.body
+    const userId = req.user.id
+
+    console.log(`💬 User ${userId} commenting on post ${postId}`, parentCommentId ? `(replying to ${parentCommentId})` : '')
+
+    if (!commentText || commentText.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Comment text is required'
+      })
+    }
+
+    // If this is a reply, verify the parent comment exists
+    if (parentCommentId) {
+      const { data: parentComment, error: parentError } = await supabase
+        .from('post_comments')
+        .select('id, post_id')
+        .eq('id', parentCommentId)
+        .single()
+
+      if (parentError || !parentComment) {
+        return res.status(404).json({
+          success: false,
+          error: 'Parent comment not found'
+        })
+      }
+
+      // Verify parent comment belongs to the same post
+      if (parentComment.post_id !== postId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Parent comment does not belong to this post'
+        })
+      }
+    }
+
+    // Insert comment
+    const { data: comment, error: commentError } = await supabase
+      .from('post_comments')
+      .insert({
+        post_id: postId,
+        user_id: userId,
+        comment_text: commentText.trim(),
+        parent_comment_id: parentCommentId || null
+      })
+      .select(`
+        *,
+        user:users (
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .single()
+
+    if (commentError) {
+      console.error('❌ Comment insert error:', commentError)
+      throw commentError
+    }
+
+    // If this is a reply, increment parent comment's replies_count
+    if (parentCommentId) {
+      const { error: replyIncrementError } = await supabase.rpc('increment_comment_replies', {
+        comment_id_param: parentCommentId
+      })
+
+      if (replyIncrementError) {
+        console.error('❌ RPC increment_comment_replies failed:', replyIncrementError)
+        // Don't throw - the comment was created successfully
+      }
+    }
+
+    // Always increment post's comments_count (for both top-level comments and replies)
+    console.log('🔄 Calling increment_post_comments RPC for post:', postId)
+    const { error: incrementError } = await supabase.rpc('increment_post_comments', {
+      post_id_param: postId
+    })
+
+    if (incrementError) {
+      console.error('❌ RPC increment_post_comments failed:', incrementError)
+      throw new Error('Failed to update comment count')
+    }
+
+    // Create notifications
+    if (parentCommentId) {
+      // This is a reply - notify the parent comment author
+      const { data: parentComment } = await supabase
+        .from('post_comments')
+        .select('user_id')
+        .eq('id', parentCommentId)
+        .single()
+
+      if (parentComment) {
+        await createReplyNotification(parentComment.user_id, userId, postId, comment.id)
+      }
+
+      // Also notify post author if they're different from commenter and parent comment author
+      const { data: post } = await supabase
+        .from('posts')
+        .select('user_id')
+        .eq('id', postId)
+        .single()
+
+      if (post && post.user_id !== userId && post.user_id !== parentComment?.user_id) {
+        await createCommentNotification(post.user_id, userId, postId, comment.id)
+      }
+    } else {
+      // Top-level comment - notify post author
+      const { data: post } = await supabase
+        .from('posts')
+        .select('user_id')
+        .eq('id', postId)
+        .single()
+
+      if (post) {
+        await createCommentNotification(post.user_id, userId, postId, comment.id)
+      }
+    }
+
+    console.log('✅ Comment added successfully')
+
+    res.json({
+      success: true,
+      data: comment
+    })
+  } catch (error) {
+    console.error('❌ Add comment error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to add comment',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get comments for a post (includes replies)
+ * GET /api/posts/:postId/comments?limit=20&cursor=timestamp
+ * Returns top-level comments with nested replies
+ */
+export const getComments = async (req, res) => {
+  try {
+    const { postId } = req.params
+    const { limit = 20, cursor } = req.query
+
+    console.log(`📥 Fetching comments for post ${postId}`)
+
+    // Fetch top-level comments (no parent)
+    let topLevelQuery = supabase
+      .from('post_comments')
+      .select(`
+        *,
+        user:users (
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('post_id', postId)
+      .is('parent_comment_id', null)
+      .order('created_at', { ascending: true })
+      .limit(parseInt(limit))
+
+    // Cursor-based pagination (only for top-level comments)
+    if (cursor) {
+      topLevelQuery = topLevelQuery.gt('created_at', cursor)
+    }
+
+    const { data: topLevelComments, error: topLevelError } = await topLevelQuery
+
+    if (topLevelError) {
+      console.error('❌ Get comments error:', topLevelError)
+      throw topLevelError
+    }
+
+    // Fetch all replies for these top-level comments
+    const topLevelIds = topLevelComments.map(c => c.id)
+    let replies = []
+
+    if (topLevelIds.length > 0) {
+      const { data: repliesData, error: repliesError } = await supabase
+        .from('post_comments')
+        .select(`
+          *,
+          user:users (
+            id,
+            username,
+            full_name,
+            profile_photo_url
+          )
+        `)
+        .in('parent_comment_id', topLevelIds)
+        .order('created_at', { ascending: true })
+
+      if (!repliesError && repliesData) {
+        replies = repliesData
+      }
+    }
+
+    // Organize replies under their parent comments
+    const commentsWithReplies = topLevelComments.map(comment => ({
+      ...comment,
+      replies: replies.filter(reply => reply.parent_comment_id === comment.id)
+    }))
+
+    console.log(`✅ Found ${topLevelComments.length} top-level comments with ${replies.length} total replies`)
+
+    res.json({
+      success: true,
+      data: {
+        comments: commentsWithReplies,
+        nextCursor: topLevelComments.length === parseInt(limit)
+          ? topLevelComments[topLevelComments.length - 1].created_at
+          : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get comments error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch comments',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Delete a comment
+ * DELETE /api/posts/comments/:commentId
+ */
+export const deleteComment = async (req, res) => {
+  try {
+    const { commentId } = req.params
+    const userId = req.user.id
+
+    console.log(`🗑️  User ${userId} deleting comment ${commentId}`)
+
+    // Get the comment to verify ownership and get post_id and parent_comment_id
+    const { data: comment, error: fetchError } = await supabase
+      .from('post_comments')
+      .select('id, user_id, post_id, parent_comment_id')
+      .eq('id', commentId)
+      .single()
+
+    if (fetchError || !comment) {
+      return res.status(404).json({
+        success: false,
+        error: 'Comment not found'
+      })
+    }
+
+    // Verify ownership
+    if (comment.user_id !== userId) {
+      return res.status(403).json({
+        success: false,
+        error: 'You can only delete your own comments'
+      })
+    }
+
+    // Delete the comment (CASCADE will delete any replies)
+    const { error: deleteError } = await supabase
+      .from('post_comments')
+      .delete()
+      .eq('id', commentId)
+
+    if (deleteError) {
+      console.error('❌ Delete comment error:', deleteError)
+      throw deleteError
+    }
+
+    // If this is a reply, decrement parent comment's replies_count
+    if (comment.parent_comment_id) {
+      const { error: replyDecrementError } = await supabase.rpc('decrement_comment_replies', {
+        comment_id_param: comment.parent_comment_id
+      })
+
+      if (replyDecrementError) {
+        console.error('❌ RPC decrement_comment_replies failed:', replyDecrementError)
+        // Don't throw - the comment was deleted successfully
+      }
+    }
+
+    // Always decrement post's comments_count (for both top-level comments and replies)
+    console.log('🔄 Calling decrement_post_comments RPC for post:', comment.post_id)
+    const { error: decrementError } = await supabase.rpc('decrement_post_comments', {
+      post_id_param: comment.post_id
+    })
+
+    if (decrementError) {
+      console.error('❌ RPC decrement_post_comments failed:', decrementError)
+      throw new Error('Failed to update comment count')
+    }
+
+    console.log('✅ Comment deleted successfully')
+
+    res.json({
+      success: true,
+      message: 'Comment deleted'
+    })
+  } catch (error) {
+    console.error('❌ Delete comment error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete comment',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Save a post
+ * POST /api/posts/:postId/save
+ */
+export const savePost = async (req, res) => {
+  try {
+    const { postId } = req.params
+    const userId = req.user.id
+
+    console.log(`🔖 User ${userId} saving post ${postId}`)
+
+    // Insert save
+    const { error: saveError } = await supabase
+      .from('post_saves')
+      .insert({ post_id: postId, user_id: userId })
+
+    if (saveError) {
+      if (saveError.code === '23505') { // Unique constraint violation
+        return res.status(400).json({
+          success: false,
+          error: 'Already saved'
+        })
+      }
+      throw saveError
+    }
+
+    // Increment saves_count atomically using RPC
+    console.log('🔄 Calling increment_post_saves RPC for post:', postId)
+    const { error: incrementError } = await supabase.rpc('increment_post_saves', {
+      post_id_param: postId
+    })
+
+    if (incrementError) {
+      console.error('❌ RPC increment_post_saves failed:', incrementError)
+      throw new Error('Failed to update save count')
+    }
+
+    console.log('✅ Post saved successfully')
+
+    res.json({
+      success: true,
+      message: 'Post saved'
+    })
+  } catch (error) {
+    console.error('❌ Save post error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save post',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Unsave a post
+ * DELETE /api/posts/:postId/save
+ */
+export const unsavePost = async (req, res) => {
+  try {
+    const { postId } = req.params
+    const userId = req.user.id
+
+    console.log(`📌 User ${userId} unsaving post ${postId}`)
+
+    // Delete save
+    const { error: deleteError } = await supabase
+      .from('post_saves')
+      .delete()
+      .match({ post_id: postId, user_id: userId })
+
+    if (deleteError) {
+      throw deleteError
+    }
+
+    // Decrement saves_count atomically using RPC
+    console.log('🔄 Calling decrement_post_saves RPC for post:', postId)
+    const { error: decrementError } = await supabase.rpc('decrement_post_saves', {
+      post_id_param: postId
+    })
+
+    if (decrementError) {
+      console.error('❌ RPC decrement_post_saves failed:', decrementError)
+      throw new Error('Failed to update save count')
+    }
+
+    console.log('✅ Post unsaved successfully')
+
+    res.json({
+      success: true,
+      message: 'Post unsaved'
+    })
+  } catch (error) {
+    console.error('❌ Unsave post error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to unsave post',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get saved posts for the current user
+ * GET /api/users/me/saved?limit=20&cursor=timestamp
+ */
+export const getSavedPosts = async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { limit = 20, cursor } = req.query
+
+    console.log(`📚 Fetching saved posts for user ${userId}`)
+
+    // Build query for saved posts
+    let query = supabase
+      .from('post_saves')
+      .select(`
+        created_at,
+        post:posts (
+          id,
+          user_id,
+          workout_completion_id,
+          workout_name,
+          caption,
+          image_urls,
+          stats,
+          likes_count,
+          comments_count,
+          saves_count,
+          visibility,
+          created_at,
+          updated_at,
+          user:users (
+            id,
+            username,
+            full_name,
+            profile_photo_url
+          )
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit))
+
+    // Apply cursor for pagination
+    if (cursor) {
+      query = query.lt('created_at', cursor)
+    }
+
+    const { data: savedPosts, error } = await query
+
+    if (error) {
+      console.error('❌ Get saved posts error:', error)
+      throw error
+    }
+
+    // Extract posts and add liked_by_me flag
+    const posts = savedPosts
+      .filter(sp => sp.post !== null) // Filter out saves for deleted posts
+      .map(sp => sp.post)
+
+    // Check which posts user liked
+    const postIds = posts.map(p => p.id)
+    let likedPostIds = []
+
+    if (postIds.length > 0) {
+      const { data: likes } = await supabase
+        .from('post_likes')
+        .select('post_id')
+        .eq('user_id', userId)
+        .in('post_id', postIds)
+
+      likedPostIds = likes ? likes.map(l => l.post_id) : []
+    }
+
+    // Add liked_by_me and saved_by_me flags
+    const postsWithFlags = posts.map(post => ({
+      ...post,
+      liked_by_me: likedPostIds.includes(post.id),
+      saved_by_me: true // All posts in this response are saved by definition
+    }))
+
+    console.log(`✅ Found ${posts.length} saved posts`)
+
+    res.json({
+      success: true,
+      data: {
+        posts: postsWithFlags,
+        nextCursor: savedPosts.length === parseInt(limit)
+          ? savedPosts[savedPosts.length - 1].created_at
+          : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get saved posts error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch saved posts',
       message: error.message
     })
   }

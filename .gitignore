@@ -49,3 +49,16 @@ build/
 database_migration_multiple_images.sql
 migrations/add_atomic_like_functions.sql
 migrations/remove_image_url_field.sql
+docs/PHASE_5_IMPLEMENTATION.md
+migrations/add_challenges_and_groups_system.sql
+migrations/add_comment_replies.sql
+migrations/add_notifications_system.sql
+migrations/add_post_comments_system.sql
+migrations/add_post_saves_system.sql
+migrations/add_posts_count_and_sync.sql
+migrations/add_scheduled_date_to_daily_workouts.sql
+migrations/add_social_links_to_users.sql
+migrations/add_user_follows_system.sql
+migrations/backfill_scheduled_dates.sql
+scripts/get-bodypart-target-mapping.js
+scripts/get-target-muscles.js

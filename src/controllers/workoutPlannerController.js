@@ -547,6 +547,36 @@ export async function getWorkoutCompletionByDailyWorkoutId(req, res) {
   }
 }
 
+/**
+ * Get workout completion by completion ID
+ */
+export async function getWorkoutCompletionById(req, res) {
+  try {
+    const userId = req.user.id;
+    const { completionId } = req.params;
+
+    const completion = await workoutPlannerService.getWorkoutCompletionById(completionId, userId);
+
+    if (!completion) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workout completion not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: completion
+    });
+  } catch (error) {
+    console.error('Error fetching workout completion:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch workout completion'
+    });
+  }
+}
+
 // ============================================================================
 // PROGRESS & STATS
 // ============================================================================

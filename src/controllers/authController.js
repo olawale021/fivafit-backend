@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js'
 import { generateJWT } from '../utils/auth.js'
+import { createFollowNotification, deleteNotification } from '../services/notificationService.js'
 import {
   validateRegistrationData,
   validateProfileUpdateData,
@@ -494,6 +495,529 @@ export async function refreshToken(req, res) {
     res.status(500).json({
       error: 'Server error',
       message: 'Internal server error during token refresh'
+    })
+  }
+}
+
+/**
+ * Get user statistics
+ * GET /api/users/:userId/stats
+ */
+export async function getUserStats(req, res) {
+  try {
+    const { userId } = req.params
+
+    console.log(`📊 Fetching stats for user: ${userId}`)
+
+    // Get total workouts completed
+    const { count: totalWorkouts, error: workoutsError } = await supabase
+      .from('workout_completions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+
+    if (workoutsError) {
+      console.error('❌ Error fetching workouts count:', workoutsError)
+    }
+
+    // Get total posts count, followers, and following from user profile
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('posts_count, followers_count, following_count')
+      .eq('id', userId)
+      .single()
+
+    if (userError) {
+      console.error('❌ Error fetching user data:', userError)
+    }
+
+    // Calculate current streak
+    const { data: recentCompletions, error: streakError } = await supabase
+      .from('workout_completions')
+      .select('completed_at')
+      .eq('user_id', userId)
+      .order('completed_at', { ascending: false })
+      .limit(365) // Check up to 1 year
+
+    let currentStreak = 0
+    if (recentCompletions && recentCompletions.length > 0 && !streakError) {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+
+      // Check if there's a workout today or yesterday
+      const mostRecent = new Date(recentCompletions[0].completed_at)
+      mostRecent.setHours(0, 0, 0, 0)
+
+      const daysDiff = Math.floor((today - mostRecent) / (1000 * 60 * 60 * 24))
+
+      if (daysDiff <= 1) {
+        // Start counting streak
+        currentStreak = 1
+        let prevDate = mostRecent
+
+        for (let i = 1; i < recentCompletions.length; i++) {
+          const currentDate = new Date(recentCompletions[i].completed_at)
+          currentDate.setHours(0, 0, 0, 0)
+
+          const diff = Math.floor((prevDate - currentDate) / (1000 * 60 * 60 * 24))
+
+          if (diff === 1) {
+            currentStreak++
+            prevDate = currentDate
+          } else if (diff === 0) {
+            // Same day, continue
+            continue
+          } else {
+            // Streak broken
+            break
+          }
+        }
+      }
+    }
+
+    const stats = {
+      totalWorkouts: totalWorkouts || 0,
+      currentStreak,
+      postsCount: userData?.posts_count || 0,
+      followersCount: userData?.followers_count || 0,
+      followingCount: userData?.following_count || 0
+    }
+
+    console.log(`✅ Stats fetched for user ${userId}:`, stats)
+
+    res.json({
+      success: true,
+      data: stats
+    })
+  } catch (error) {
+    console.error('❌ Get user stats error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch user stats',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get user profile by ID
+ * GET /api/users/:userId
+ */
+export async function getUserProfile(req, res) {
+  try {
+    const { userId } = req.params
+
+    // Fetch user profile from Supabase
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, username, full_name, bio, profile_photo_url, created_at')
+      .eq('id', userId)
+      .single()
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        })
+      }
+      throw error
+    }
+
+    res.json({
+      success: true,
+      data: user
+    })
+  } catch (error) {
+    console.error('❌ Get user profile error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch user profile',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Follow a user
+ * POST /api/users/:userId/follow
+ */
+export async function followUser(req, res) {
+  try {
+    const { userId } = req.params // User to follow
+    const followerId = req.user.id // Current user (follower)
+
+    // Prevent self-follow
+    if (followerId === userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot follow yourself'
+      })
+    }
+
+    // Check if already following
+    const { data: existing } = await supabase
+      .from('user_follows')
+      .select('id')
+      .eq('follower_id', followerId)
+      .eq('following_id', userId)
+      .single()
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        error: 'Already following this user'
+      })
+    }
+
+    // Create follow relationship
+    const { data: follow, error: followError } = await supabase
+      .from('user_follows')
+      .insert({
+        follower_id: followerId,
+        following_id: userId
+      })
+      .select()
+      .single()
+
+    if (followError) throw followError
+
+    // Increment counts atomically using RPC
+    const { error: countError } = await supabase.rpc('increment_follow_counts', {
+      follower_user_id: followerId,
+      following_user_id: userId
+    })
+
+    if (countError) {
+      console.error('❌ RPC increment_follow_counts failed:', countError)
+      throw new Error('Failed to update follow counts')
+    }
+
+    // Create notification for the followed user
+    await createFollowNotification(userId, followerId)
+
+    res.json({
+      success: true,
+      data: follow,
+      message: 'User followed successfully'
+    })
+  } catch (error) {
+    console.error('❌ Follow user error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to follow user',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Unfollow a user
+ * DELETE /api/users/:userId/follow
+ */
+export async function unfollowUser(req, res) {
+  try {
+    const { userId } = req.params // User to unfollow
+    const followerId = req.user.id // Current user (follower)
+
+    // Delete follow relationship
+    const { data: deleted, error: deleteError } = await supabase
+      .from('user_follows')
+      .delete()
+      .eq('follower_id', followerId)
+      .eq('following_id', userId)
+      .select()
+
+    if (deleteError) throw deleteError
+
+    if (!deleted || deleted.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Follow relationship not found'
+      })
+    }
+
+    // Decrement counts atomically using RPC
+    const { error: countError } = await supabase.rpc('decrement_follow_counts', {
+      follower_user_id: followerId,
+      following_user_id: userId
+    })
+
+    if (countError) {
+      console.error('❌ RPC decrement_follow_counts failed:', countError)
+      throw new Error('Failed to update follow counts')
+    }
+
+    // Delete the follow notification
+    await deleteNotification({
+      actorId: followerId,
+      type: 'follow'
+    })
+
+    res.json({
+      success: true,
+      message: 'User unfollowed successfully'
+    })
+  } catch (error) {
+    console.error('❌ Unfollow user error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to unfollow user',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get user's followers
+ * GET /api/users/:userId/followers
+ */
+export async function getUserFollowers(req, res) {
+  try {
+    const { userId } = req.params
+    const { limit = 20, cursor } = req.query
+
+    let query = supabase
+      .from('user_follows')
+      .select(`
+        id,
+        created_at,
+        follower:users!user_follows_follower_id_fkey(
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('following_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit))
+
+    if (cursor) {
+      query = query.lt('created_at', cursor)
+    }
+
+    const { data: follows, error } = await query
+
+    if (error) throw error
+
+    // Extract follower user data
+    const followers = follows.map(f => ({
+      ...f.follower,
+      followed_at: f.created_at
+    }))
+
+    res.json({
+      success: true,
+      data: {
+        followers,
+        nextCursor: follows.length === parseInt(limit) ? follows[follows.length - 1].created_at : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get followers error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch followers',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get users that a user is following
+ * GET /api/users/:userId/following
+ */
+export async function getUserFollowing(req, res) {
+  try {
+    const { userId } = req.params
+    const { limit = 20, cursor } = req.query
+
+    let query = supabase
+      .from('user_follows')
+      .select(`
+        id,
+        created_at,
+        following:users!user_follows_following_id_fkey(
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('follower_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit))
+
+    if (cursor) {
+      query = query.lt('created_at', cursor)
+    }
+
+    const { data: follows, error } = await query
+
+    if (error) throw error
+
+    // Extract following user data
+    const following = follows.map(f => ({
+      ...f.following,
+      followed_at: f.created_at
+    }))
+
+    res.json({
+      success: true,
+      data: {
+        following,
+        nextCursor: follows.length === parseInt(limit) ? follows[follows.length - 1].created_at : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get following error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch following',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Check if current user is following another user
+ * GET /api/users/:userId/follow-status
+ */
+export async function getFollowStatus(req, res) {
+  try {
+    const { userId } = req.params
+    const currentUserId = req.user.id
+
+    // Check if following
+    const { data: follow, error } = await supabase
+      .from('user_follows')
+      .select('id, created_at')
+      .eq('follower_id', currentUserId)
+      .eq('following_id', userId)
+      .single()
+
+    res.json({
+      success: true,
+      data: {
+        isFollowing: !!follow,
+        followedAt: follow?.created_at || null
+      }
+    })
+  } catch (error) {
+    // Not following is not an error
+    if (error.code === 'PGRST116') {
+      return res.json({
+        success: true,
+        data: {
+          isFollowing: false,
+          followedAt: null
+        }
+      })
+    }
+
+    console.error('❌ Get follow status error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check follow status',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Search for users by name or username
+ * GET /api/users/search?q=query&limit=20
+ */
+export async function searchUsers(req, res) {
+  try {
+    const { q, limit = 20 } = req.query
+    const currentUserId = req.user?.id
+
+    if (!q || q.trim().length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          users: []
+        }
+      })
+    }
+
+    const searchQuery = q.trim().toLowerCase()
+
+    // Search by username or full_name (case-insensitive)
+    let query = supabase
+      .from('users')
+      .select('id, username, full_name, profile_photo_url, bio')
+      .or(`username.ilike.%${searchQuery}%,full_name.ilike.%${searchQuery}%`)
+      .limit(parseInt(limit))
+
+    // Exclude current user from results if authenticated
+    if (currentUserId) {
+      query = query.neq('id', currentUserId)
+    }
+
+    const { data: users, error } = await query
+
+    if (error) throw error
+
+    res.json({
+      success: true,
+      data: {
+        users: users || []
+      }
+    })
+  } catch (error) {
+    console.error('❌ Search users error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to search users',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get suggested/random users for discovery
+ * GET /api/users/suggested?limit=20
+ */
+export async function getSuggestedUsers(req, res) {
+  try {
+    const { limit = 20 } = req.query
+    const currentUserId = req.user?.id
+
+    // Get random users, excluding current user
+    let query = supabase
+      .from('users')
+      .select('id, username, full_name, profile_photo_url, bio, followers_count')
+      .limit(parseInt(limit))
+
+    // Exclude current user if authenticated
+    if (currentUserId) {
+      query = query.neq('id', currentUserId)
+    }
+
+    // Order by followers count to show more popular users first
+    // Then randomize within that
+    const { data: users, error } = await query
+      .order('followers_count', { ascending: false })
+
+    if (error) throw error
+
+    // Shuffle the results to add randomness
+    const shuffled = users?.sort(() => Math.random() - 0.5) || []
+
+    res.json({
+      success: true,
+      data: {
+        users: shuffled
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get suggested users error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get suggested users',
+      message: error.message
     })
   }
 }

@@ -10,6 +10,10 @@ import scanHistoryRoutes from './routes/scanHistory.js'
 import exerciseRoutes from './routes/exerciseRoutes.js'
 import workoutPlannerRoutes from './routes/workoutPlanner.js'
 import postsRoutes from './routes/posts.js'
+import usersRoutes from './routes/users.js'
+import notificationsRoutes from './routes/notifications.js'
+import challengesRoutes from './routes/challenges.js'
+import groupsRoutes from './routes/groups.js'
 
 // Load environment variables
 dotenv.config()
@@ -114,6 +118,10 @@ app.use('/api/scan-history', scanHistoryRoutes)
 app.use('/api/exercises', exerciseRoutes)
 app.use('/api/workout-planner', workoutPlannerRoutes)
 app.use('/api/posts', postsRoutes)
+app.use('/api/users', usersRoutes)
+app.use('/api/notifications', notificationsRoutes)
+app.use('/api/challenges', challengesRoutes)
+app.use('/api/groups', groupsRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
