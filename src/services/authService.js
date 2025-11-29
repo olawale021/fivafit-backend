@@ -5,6 +5,7 @@ import {
   findUserByUsername,
   findUserById,
   findUserByGoogleId,
+  findUserByAppleId,
   updateUser,
   updateLastLogin,
   verifyPassword,
@@ -262,7 +263,7 @@ export async function handleAppleOAuth(appleData) {
   const { user: appleUserId, email, fullName } = appleData
 
   // Try to find user by Apple ID first
-  let user = await findUserById(appleUserId)
+  let user = await findUserByAppleId(appleUserId)
 
   if (!user && email) {
     // Try to find by email

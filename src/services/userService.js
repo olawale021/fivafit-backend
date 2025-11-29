@@ -3,8 +3,8 @@ import { hashPassword, comparePassword } from '../utils/auth.js'
 
 export const createUser = async (userData) => {
   try {
-    const { username, email, password, full_name, google_id, profile_photo_url } = userData
-    
+    const { username, email, password, full_name, google_id, apple_id, profile_photo_url } = userData
+
     let password_hash = null
     if (password) {
       password_hash = await hashPassword(password)
@@ -18,6 +18,7 @@ export const createUser = async (userData) => {
         full_name,
         password_hash,
         google_id,
+        apple_id,
         profile_photo_url,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -113,6 +114,26 @@ export const findUserByGoogleId = async (google_id) => {
     return data
   } catch (error) {
     console.error('Error finding user by Google ID:', error)
+    throw error
+  }
+}
+
+export const findUserByAppleId = async (apple_id) => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('apple_id', apple_id)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Database error finding user by Apple ID:', error)
+      throw error
+    }
+
+    return data
+  } catch (error) {
+    console.error('Error finding user by Apple ID:', error)
     throw error
   }
 }
