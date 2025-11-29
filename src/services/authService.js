@@ -256,6 +256,44 @@ export async function handleGoogleOAuth(profile) {
 }
 
 /**
+ * Handle Apple Sign-In OAuth
+ */
+export async function handleAppleOAuth(appleData) {
+  const { user: appleUserId, email, fullName } = appleData
+
+  // Try to find user by Apple ID first
+  let user = await findUserById(appleUserId)
+
+  if (!user && email) {
+    // Try to find by email
+    user = await findUserByEmail(email)
+
+    if (user) {
+      // Link Apple ID to existing account
+      user = await updateUser(user.id, { apple_id: appleUserId })
+    } else {
+      // Create new user
+      const name = fullName
+        ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
+        : null
+
+      user = await createUser({
+        apple_id: appleUserId,
+        email: email,
+        full_name: name || 'Apple User',
+      })
+    }
+  }
+
+  if (!user) {
+    throw new Error('APPLE_AUTH_FAILED')
+  }
+
+  await updateLastLogin(user.id)
+  return user
+}
+
+/**
  * Setup username for Google OAuth users
  */
 export async function setupUsername(userId, username, currentUser) {

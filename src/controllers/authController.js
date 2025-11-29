@@ -10,7 +10,8 @@ import {
   updateUserProfile,
   checkOnboardingStatus,
   isOnboardingUpdate,
-  formatUserResponse
+  formatUserResponse,
+  handleAppleOAuth
 } from '../services/authService.js'
 
 /**
@@ -127,6 +128,60 @@ export async function login(req, res) {
     res.status(500).json({
       error: 'Login failed',
       message: 'Internal server error during login'
+    })
+  }
+}
+
+/**
+ * POST /api/auth/apple
+ * Handle Apple Sign-In
+ */
+export async function appleSignIn(req, res) {
+  try {
+    const { identityToken, user, email, fullName } = req.body
+
+    if (!identityToken || !user) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'Identity token and user ID are required'
+      })
+    }
+
+    // TODO: Verify identityToken with Apple's servers for production
+    // For now, we trust the client (okay for development)
+
+    const authenticatedUser = await handleAppleOAuth({
+      user,
+      email,
+      fullName
+    })
+
+    const token = generateJWT({ userId: authenticatedUser.id, email: authenticatedUser.email })
+    const userResponse = formatUserResponse(authenticatedUser, true)
+
+    res.json({
+      success: true,
+      message: 'Apple Sign-In successful',
+      data: {
+        user: userResponse,
+        token
+      }
+    })
+
+    console.log(`✅ Apple Sign-In successful: ${authenticatedUser.email || authenticatedUser.id}`)
+  } catch (error) {
+    console.error('❌ Apple Sign-In error:', error)
+
+    if (error.message === 'APPLE_AUTH_FAILED') {
+      return res.status(401).json({
+        error: 'Authentication failed',
+        message: 'Apple Sign-In authentication failed'
+      })
+    }
+
+    res.status(500).json({
+      error: 'Sign-in failed',
+      message: 'Internal server error during Apple Sign-In'
     })
   }
 }

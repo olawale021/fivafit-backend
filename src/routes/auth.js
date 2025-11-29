@@ -9,6 +9,7 @@ import {
   register,
   login,
   googleCallback,
+  appleSignIn,
   handleSetupUsername,
   getProfile,
   updateProfile,
@@ -91,6 +92,12 @@ router.get('/google/callback',
   passport.authenticate('google', { session: false }),
   googleCallback
 )
+
+/**
+ * POST /api/auth/apple
+ * Apple Sign-In
+ */
+router.post('/apple', appleSignIn)
 
 /**
  * POST /api/auth/setup-username

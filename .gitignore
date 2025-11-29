@@ -64,3 +64,4 @@ scripts/get-bodypart-target-mapping.js
 scripts/get-target-muscles.js
 migrations/create_saved_workouts_and_exercises.sql
 scripts/create-user.js
+migrations/add_apple_id_to_users.sql

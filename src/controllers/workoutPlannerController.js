@@ -330,16 +330,10 @@ export async function getCurrentActivePlan(req, res) {
 
     const plan = await workoutPlannerService.getCurrentActivePlan(userId);
 
-    if (!plan) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active workout plan found'
-      });
-    }
-
+    // No plan is a valid state for new users - return success with null data
     res.json({
       success: true,
-      data: plan
+      data: plan || null
     });
   } catch (error) {
     console.error('Error fetching active plan:', error);
