@@ -65,3 +65,4 @@ scripts/get-target-muscles.js
 migrations/create_saved_workouts_and_exercises.sql
 scripts/create-user.js
 migrations/add_apple_id_to_users.sql
+migrations/add_selected_dates_to_workout_plans.sql

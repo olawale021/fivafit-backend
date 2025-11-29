@@ -279,7 +279,10 @@ export async function handleAppleOAuth(appleData) {
   // Try to find user by Apple ID first
   let user = await findUserByAppleId(appleUserId)
 
-  if (!user && userEmail) {
+  if (user) {
+    // User exists, just log them in (no need to update name)
+    console.log('✅ Found existing Apple user:', user.email)
+  } else if (userEmail) {
     // Try to find by email
     user = await findUserByEmail(userEmail)
 
@@ -288,7 +291,7 @@ export async function handleAppleOAuth(appleData) {
       console.log('🔗 Linking Apple ID to existing user:', user.id)
       user = await updateUser(user.id, { apple_id: appleUserId })
     } else {
-      // Create new user
+      // Create new user (only on first sign-in when we have fullName)
       const name = fullName && (fullName.givenName || fullName.familyName)
         ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
         : null

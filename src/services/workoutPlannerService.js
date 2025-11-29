@@ -24,7 +24,9 @@ export async function generateWeeklyPlan({
   target_body_parts,
   days_per_week,
   hours_per_session,
-  selected_days
+  selected_days,
+  selected_dates,
+  start_date
 }) {
   try {
     console.log(`📋 Step 1: Fetching user profile for ${userId}...`);
@@ -113,7 +115,9 @@ export async function generateWeeklyPlan({
       target_body_parts,
       days_per_week,
       hours_per_session,
-      selected_days
+      selected_days,
+      selected_dates,
+      start_date
     });
 
     console.log(`🎉 Workout plan created successfully: ${savedPlan.id}`);
@@ -137,7 +141,9 @@ export async function generatePlanPreview({
   fitness_levels,
   days_per_week,
   hours_per_session,
-  selected_days
+  selected_days,
+  selected_dates,
+  start_date
 }) {
   try {
     console.log(`📋 Generating plan preview for user ${userId}...`);
@@ -188,6 +194,8 @@ export async function generatePlanPreview({
         days_per_week,
         hours_per_session,
         selected_days,
+        selected_dates,
+        start_date,
         exercise_range: exerciseRange
       },
       availableExercises: exerciseMetadata
@@ -225,7 +233,9 @@ export async function generatePlanPreview({
         fitness_levels: fitness_levels,
         days_per_week,
         hours_per_session,
-        selected_days
+        selected_days,
+        selected_dates,
+        start_date
       }
     );
 
@@ -823,7 +833,7 @@ function buildPlanWithExerciseData(aiPlan, fullExercises) {
 async function savePlanToDatabase(userId, completePlan, preferences) {
   try {
     // Create workout plan record
-    const { data: plan, error: planError } = await supabase
+    const { data: plan, error: planError} = await supabase
       .from('workout_plans')
       .insert({
         user_id: userId,
@@ -833,11 +843,13 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
         target_body_parts: preferences.target_body_parts,
         days_per_week: preferences.days_per_week,
         hours_per_session: preferences.hours_per_session,
-        selected_days: preferences.selected_days,
+        selected_days: preferences.selected_days, // Keep for backward compatibility
+        selected_dates: preferences.selected_dates, // New: actual calendar dates
+        start_date: preferences.start_date, // New: earliest selected date
         total_workouts: completePlan.daily_workouts.length,
         is_ai_generated: true,
         is_active: true,
-        started_at: new Date().toISOString(),
+        started_at: preferences.start_date || new Date().toISOString().split('T')[0],
         updated_at: new Date().toISOString()
       })
       .select()
@@ -846,57 +858,40 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
     if (planError) throw planError;
 
     console.log(`✅ Created workout_plans record: ${plan.id}`);
+    console.log(`📅 Start date: ${plan.start_date}, Selected dates: ${preferences.selected_dates?.length || 0}`);
 
-    // Calculate scheduled dates for each workout
-    const calculateScheduledDate = (dayOfWeek, weekNumber) => {
-      const planStartDate = new Date(plan.started_at);
-      const dayNameToIndex = {
-        'sunday': 0,
-        'monday': 1,
-        'tuesday': 2,
-        'wednesday': 3,
-        'thursday': 4,
-        'friday': 5,
-        'saturday': 6
-      };
+    // Create daily workouts with scheduled dates mapped from selected_dates
+    const dailyWorkoutsToInsert = completePlan.daily_workouts.map((day, index) => {
+      // Map each workout to its corresponding selected date
+      const scheduledDate = preferences.selected_dates && preferences.selected_dates[index]
+        ? preferences.selected_dates[index]
+        : null;
 
-      const targetDayIndex = dayNameToIndex[dayOfWeek?.toLowerCase()];
-      if (targetDayIndex === undefined) return null;
-
-      // Find the first occurrence of the target day from plan start date
-      const currentDayIndex = planStartDate.getDay();
-      let daysUntilFirstOccurrence = targetDayIndex - currentDayIndex;
-      if (daysUntilFirstOccurrence < 0) {
-        daysUntilFirstOccurrence += 7;
+      // Get day of week from scheduled_date if available
+      let dayOfWeek = day.day_of_week;
+      if (scheduledDate && !dayOfWeek) {
+        const date = new Date(scheduledDate);
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        dayOfWeek = dayNames[date.getDay()];
       }
 
-      // Add weeks offset
-      const totalDaysOffset = daysUntilFirstOccurrence + ((weekNumber - 1) * 7);
-
-      const scheduledDate = new Date(planStartDate);
-      scheduledDate.setDate(planStartDate.getDate() + totalDaysOffset);
-
-      // Return in YYYY-MM-DD format for PostgreSQL DATE type
-      return scheduledDate.toISOString().split('T')[0];
-    };
-
-    // Create daily workouts with scheduled dates
-    const dailyWorkoutsToInsert = completePlan.daily_workouts.map((day, index) => ({
-      workout_plan_id: plan.id,
-      day_of_week: day.day_of_week,
-      week_number: day.week_number || 1,
-      day_order: day.day_order || (index + 1),
-      workout_name: day.workout_name,
-      focus_area: day.focus_area,
-      target_muscles: day.target_muscles,
-      estimated_duration_minutes: day.estimated_duration_minutes,
-      exercises: day.exercises, // Store full exercise data as JSONB
-      warm_up_exercises: day.warm_up_exercises || [], // Store warm-up exercises with full details
-      warm_up: day.warm_up,
-      cool_down: day.cool_down,
-      workout_tips: day.workout_tips,
-      scheduled_date: calculateScheduledDate(day.day_of_week, day.week_number || 1)
-    }));
+      return {
+        workout_plan_id: plan.id,
+        day_of_week: dayOfWeek,
+        week_number: day.week_number || 1,
+        day_order: day.day_order || (index + 1),
+        workout_name: day.workout_name,
+        focus_area: day.focus_area,
+        target_muscles: day.target_muscles,
+        estimated_duration_minutes: day.estimated_duration_minutes,
+        exercises: day.exercises, // Store full exercise data as JSONB
+        warm_up_exercises: day.warm_up_exercises || [], // Store warm-up exercises with full details
+        warm_up: day.warm_up,
+        cool_down: day.cool_down,
+        workout_tips: day.workout_tips,
+        scheduled_date: scheduledDate // Direct mapping from selected_dates array
+      };
+    });
 
     const { data: dailyWorkouts, error: dailyError } = await supabase
       .from('daily_workouts')

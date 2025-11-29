@@ -74,7 +74,9 @@ export async function generatePlanPreview(req, res) {
       fitness_levels,
       days_per_week,
       hours_per_session,
-      selected_days
+      selected_days,
+      selected_dates,
+      start_date
     } = req.body;
 
     // Validate required fields
@@ -108,7 +110,9 @@ export async function generatePlanPreview(req, res) {
       fitness_levels,
       days_per_week,
       hours_per_session,
-      selected_days
+      selected_days,
+      selected_dates,
+      start_date
     });
 
     console.log(`✅ Plan preview generated with alternatives`);
