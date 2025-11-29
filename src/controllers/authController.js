@@ -153,7 +153,8 @@ export async function appleSignIn(req, res) {
     const authenticatedUser = await handleAppleOAuth({
       user,
       email,
-      fullName
+      fullName,
+      identityToken
     })
 
     const token = generateJWT({ userId: authenticatedUser.id, email: authenticatedUser.email })

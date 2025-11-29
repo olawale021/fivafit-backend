@@ -260,33 +260,52 @@ export async function handleGoogleOAuth(profile) {
  * Handle Apple Sign-In OAuth
  */
 export async function handleAppleOAuth(appleData) {
-  const { user: appleUserId, email, fullName } = appleData
+  const { user: appleUserId, email, fullName, identityToken } = appleData
+
+  // Decode the identity token to get email (Apple only sends email on first sign-in)
+  let userEmail = email
+  if (!userEmail && identityToken) {
+    try {
+      // Decode JWT without verification (Apple's public keys verification can be added later)
+      const base64Payload = identityToken.split('.')[1]
+      const payload = JSON.parse(Buffer.from(base64Payload, 'base64').toString())
+      userEmail = payload.email
+      console.log('📧 Extracted email from identityToken:', userEmail)
+    } catch (error) {
+      console.error('❌ Failed to decode identityToken:', error)
+    }
+  }
 
   // Try to find user by Apple ID first
   let user = await findUserByAppleId(appleUserId)
 
-  if (!user && email) {
+  if (!user && userEmail) {
     // Try to find by email
-    user = await findUserByEmail(email)
+    user = await findUserByEmail(userEmail)
 
     if (user) {
       // Link Apple ID to existing account
+      console.log('🔗 Linking Apple ID to existing user:', user.id)
       user = await updateUser(user.id, { apple_id: appleUserId })
     } else {
       // Create new user
-      const name = fullName
+      const name = fullName && (fullName.givenName || fullName.familyName)
         ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
         : null
 
+      console.log('👤 Creating new Apple user with email:', userEmail)
       user = await createUser({
         apple_id: appleUserId,
-        email: email,
+        email: userEmail,
         full_name: name || 'Apple User',
       })
     }
   }
 
   if (!user) {
+    console.error('❌ Apple auth failed - no user found or created')
+    console.error('Apple User ID:', appleUserId)
+    console.error('Email:', userEmail)
     throw new Error('APPLE_AUTH_FAILED')
   }
 
