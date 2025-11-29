@@ -148,8 +148,9 @@ export async function googleCallback(req, res) {
                             userAgent.includes('Android') ||
                             userAgent.includes('iPhone')
 
+    // Use environment variables for redirect URLs (no hardcoded IPs)
     const redirectUrl = isMobileRequest
-      ? `${process.env.MOBILE_SUCCESS_URL || 'exp://192.168.1.185:8082/--/auth/callback'}?token=${token}&needsUsername=${!user.username}`
+      ? `${process.env.MOBILE_SUCCESS_URL || 'stepmodemobile://auth/callback'}?token=${token}&needsUsername=${!user.username}`
       : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/success?token=${token}&needsUsername=${!user.username}`
 
     res.redirect(redirectUrl)
@@ -163,7 +164,7 @@ export async function googleCallback(req, res) {
                             userAgent.includes('Android') ||
                             userAgent.includes('iPhone')
     const errorUrl = isMobileRequest
-      ? `${process.env.MOBILE_ERROR_URL || 'exp://192.168.1.185:8082/--/step3'}`
+      ? `${process.env.MOBILE_ERROR_URL || 'stepmodemobile://step3'}`
       : `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/error`
     res.redirect(errorUrl)
   }
@@ -609,7 +610,7 @@ export async function getUserProfile(req, res) {
     // Fetch user profile from Supabase
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, username, full_name, bio, profile_photo_url, created_at')
+      .select('id, username, full_name, bio, profile_photo_url, socials, created_at')
       .eq('id', userId)
       .single()
 

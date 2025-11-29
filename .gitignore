@@ -62,3 +62,5 @@ migrations/add_user_follows_system.sql
 migrations/backfill_scheduled_dates.sql
 scripts/get-bodypart-target-mapping.js
 scripts/get-target-muscles.js
+migrations/create_saved_workouts_and_exercises.sql
+scripts/create-user.js

@@ -134,6 +134,7 @@ export async function generatePlanPreview({
   userId,
   fitness_goals,
   target_body_parts,
+  fitness_levels,
   days_per_week,
   hours_per_session,
   selected_days
@@ -154,11 +155,17 @@ export async function generatePlanPreview({
       height_cm: user.height_cm
     };
 
-    const preferences = await getUserPreferences(userId);
-    const fitnessLevel = preferences?.fitness_level || 'beginner';
+    // Use the fitness levels provided by the user during plan creation (required)
+    if (!fitness_levels || !Array.isArray(fitness_levels) || fitness_levels.length === 0) {
+      throw new Error('fitness_levels is required and must be a non-empty array');
+    }
 
-    // Fetch relevant exercises
-    const relevantExercises = await fetchExercisesForPlanner(target_body_parts, fitnessLevel);
+    // Determine exercise range based on fitness level and session duration
+    const exerciseRange = determineExerciseRange(fitness_levels, hours_per_session);
+    console.log(`📊 Exercise range for ${fitness_levels.join(', ')} @ ${hours_per_session}h: ${exerciseRange.min}-${exerciseRange.max} exercises`);
+
+    // Fetch relevant exercises for all selected fitness levels
+    const relevantExercises = await fetchExercisesForPlanner(target_body_parts, fitness_levels);
     console.log(`📊 Found ${relevantExercises.length} relevant exercises`);
 
     const exerciseMetadata = relevantExercises.map(ex => ({
@@ -174,13 +181,14 @@ export async function generatePlanPreview({
     // Generate base plan structure with AI
     console.log(`🤖 Calling AI to generate base plan...`);
     const aiPlanStructure = await aiService.generateWorkoutPlanWithAI({
-      userProfile: { ...userProfile, fitnessLevel },
+      userProfile: { ...userProfile, fitnessLevels: fitness_levels },
       preferences: {
         fitness_goals,
         target_body_parts,
         days_per_week,
         hours_per_session,
-        selected_days
+        selected_days,
+        exercise_range: exerciseRange
       },
       availableExercises: exerciseMetadata
     });
@@ -214,6 +222,7 @@ export async function generatePlanPreview({
       {
         fitness_goals,
         target_body_parts,
+        fitness_levels: fitness_levels,
         days_per_week,
         hours_per_session,
         selected_days
@@ -453,13 +462,14 @@ function buildPlanPreviewWithExerciseData(aiPlan, fullExercises, preferences) {
 export async function finalizePlanPreview({
   userId,
   planPreview,
-  userChoices
+  userChoices,
+  deletedExercises
 }) {
   try {
     console.log(`💾 Finalizing plan for user ${userId}...`);
 
-    // Apply user's exercise choices to the plan
-    const finalizedPlan = applyUserExerciseChoices(planPreview, userChoices);
+    // Apply user's exercise choices and remove deleted exercises
+    const finalizedPlan = applyUserExerciseChoices(planPreview, userChoices, deletedExercises);
 
     // Fetch full exercise details for chosen exercises only
     const chosenExerciseIds = extractExerciseIds(finalizedPlan.daily_workouts);
@@ -482,17 +492,29 @@ export async function finalizePlanPreview({
 
 /**
  * Apply user's exercise choices to replace alternatives with chosen exercises
+ * Also filters out deleted exercises
  * userChoices format: { "day_0_exercise_0": "exercise_id", "day_1_exercise_2": "exercise_id", ... }
+ * deletedExercises format: { "day_0": [1, 3], "day_2": [0], ... }
  */
-function applyUserExerciseChoices(planPreview, userChoices) {
+function applyUserExerciseChoices(planPreview, userChoices, deletedExercises = {}) {
   const finalizedPlan = JSON.parse(JSON.stringify(planPreview)); // Deep clone
 
   finalizedPlan.daily_workouts = planPreview.daily_workouts.map((day, dayIndex) => {
-    const exercises = day.exercises.map((exercise, exIndex) => {
-      const choiceKey = `day_${dayIndex}_exercise_${exIndex}`;
-      const chosenExerciseId = userChoices[choiceKey];
+    const dayKey = `day_${dayIndex}`;
+    const deletedIndices = deletedExercises[dayKey] || [];
 
-      // If user made a choice, find the chosen exercise from alternatives
+    // Filter out deleted exercises and apply user choices
+    const exercises = day.exercises
+      .map((exercise, exIndex) => {
+        // Skip deleted exercises
+        if (deletedIndices.includes(exIndex)) {
+          return null;
+        }
+
+        const choiceKey = `day_${dayIndex}_exercise_${exIndex}`;
+        const chosenExerciseId = userChoices[choiceKey];
+
+        // If user made a choice, find the chosen exercise from alternatives
       if (chosenExerciseId && chosenExerciseId !== exercise.id) {
         const chosenAlt = exercise.alternatives?.find(alt => alt.id === chosenExerciseId);
         if (chosenAlt) {
@@ -511,7 +533,8 @@ function applyUserExerciseChoices(planPreview, userChoices) {
       // No choice made or invalid choice - keep default (remove alternatives)
       const { alternatives, ...exerciseWithoutAlternatives } = exercise;
       return exerciseWithoutAlternatives;
-    });
+    })
+    .filter(exercise => exercise !== null); // Remove deleted exercises
 
     return {
       ...day,
@@ -523,11 +546,43 @@ function applyUserExerciseChoices(planPreview, userChoices) {
 }
 
 /**
+ * Determine exercise range based on fitness level and session duration
+ * - Beginner: 5-6 exercises per hour
+ * - Intermediate: 7-8 exercises per hour
+ * - Advanced: 8 exercises per hour
+ */
+function determineExerciseRange(fitnessLevels, hoursPerSession) {
+  // Determine highest fitness level selected
+  const level = fitnessLevels.includes('advanced') ? 'advanced'
+              : fitnessLevels.includes('intermediate') ? 'intermediate'
+              : 'beginner';
+
+  // Base exercises per hour based on fitness level
+  const exercisesPerHour = {
+    beginner: { min: 5, max: 6 },
+    intermediate: { min: 7, max: 8 },
+    advanced: { min: 8, max: 8 }
+  };
+
+  const baseRange = exercisesPerHour[level];
+
+  // Calculate total exercises based on session duration
+  const minExercises = Math.round(baseRange.min * hoursPerSession);
+  const maxExercises = Math.round(baseRange.max * hoursPerSession);
+
+  // Ensure reasonable bounds (min 3, max 12)
+  return {
+    min: Math.max(3, minExercises),
+    max: Math.min(12, maxExercises)
+  };
+}
+
+/**
  * Fetch exercises filtered by user's target body parts
  * Also includes bodyweight/band exercises for warm-up
  * Reduces the number of exercises sent to AI
  */
-async function fetchExercisesForPlanner(target_body_parts, fitnessLevel) {
+async function fetchExercisesForPlanner(target_body_parts, fitnessLevels) {
   try {
     // Fetch main exercises matching target body parts
     let mainQuery = supabase
@@ -541,10 +596,28 @@ async function fetchExercisesForPlanner(target_body_parts, fitnessLevel) {
       );
     }
 
-    // Prioritize beginner-friendly exercises for beginners
-    if (fitnessLevel === 'beginner') {
-      mainQuery = mainQuery.in('difficulty', ['beginner', 'intermediate']);
+    // Filter exercises based on selected fitness levels
+    // Only include difficulties that match user's exact selections (no beginner unless selected)
+    const allowedDifficulties = new Set();
+
+    fitnessLevels.forEach(level => {
+      if (level === 'beginner') {
+        allowedDifficulties.add('beginner');
+        allowedDifficulties.add('intermediate');
+      } else if (level === 'intermediate') {
+        allowedDifficulties.add('intermediate');
+        allowedDifficulties.add('advanced');
+      } else if (level === 'advanced') {
+        allowedDifficulties.add('advanced');
+      }
+    });
+
+    if (allowedDifficulties.size > 0) {
+      mainQuery = mainQuery.in('difficulty', Array.from(allowedDifficulties));
     }
+
+    console.log(`📊 Fitness levels selected: [${fitnessLevels.join(', ')}]`);
+    console.log(`📊 Fetching exercises with difficulties: [${Array.from(allowedDifficulties).join(', ')}]`);
 
     const { data: mainExercises, error: mainError } = await mainQuery
       .order('difficulty')
@@ -744,14 +817,11 @@ function buildPlanWithExerciseData(aiPlan, fullExercises) {
  * Handles:
  * - Creating workout_plans record
  * - Creating daily_workouts records
- * - Enforcing single active plan (business logic)
  * - Calculating total_workouts
+ * - Allows multiple active plans
  */
 async function savePlanToDatabase(userId, completePlan, preferences) {
   try {
-    // Business Logic: Deactivate all other active plans for this user
-    await deactivateAllUserPlans(userId);
-
     // Create workout plan record
     const { data: plan, error: planError } = await supabase
       .from('workout_plans')
@@ -854,7 +924,7 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
 
 /**
  * Deactivate all active plans for a user
- * (Business Logic: Only one active plan per user)
+ * (Utility function - not automatically enforced, allows multiple active plans)
  */
 async function deactivateAllUserPlans(userId) {
   try {
@@ -998,13 +1068,10 @@ export async function deletePlan(planId, userId) {
 }
 
 /**
- * Activate a workout plan (deactivates others)
+ * Activate a workout plan (allows multiple active plans)
  */
 export async function activatePlan(planId, userId) {
   try {
-    // Business Logic: Deactivate all other plans first
-    await deactivateAllUserPlans(userId);
-
     // Get the plan to check if it has been started before
     const { data: existingPlan, error: fetchError } = await supabase
       .from('workout_plans')

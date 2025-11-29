@@ -427,7 +427,7 @@ function buildWorkoutPlanPrompt(userProfile, preferences, availableExercises) {
     age = 'not specified',
     weight_kg = 'not specified',
     height_cm = 'not specified',
-    fitnessLevel = 'beginner'
+    fitnessLevels = ['beginner']
   } = userProfile;
 
   const {
@@ -435,7 +435,8 @@ function buildWorkoutPlanPrompt(userProfile, preferences, availableExercises) {
     target_body_parts,
     days_per_week,
     hours_per_session,
-    selected_days
+    selected_days,
+    exercise_range
   } = preferences;
 
   // Build exercises list for AI
@@ -470,7 +471,7 @@ USER PROFILE:
 - Age: ${age} years old
 - Weight: ${weight_kg} kg
 - Height: ${height_cm} cm
-- Fitness Level: ${fitnessLevel}
+- Fitness Levels: ${fitnessLevels.join(', ')} (user may have different levels for different muscle groups)
 
 WORKOUT PREFERENCES:
 - Fitness Goals: ${fitness_goals.join(', ')}
@@ -494,16 +495,22 @@ INSTRUCTIONS:
 4. Focus on these body parts: ${target_body_parts.join(', ')}
 5. ONLY use exercises from the AVAILABLE EXERCISES list above (reference by ID)
 6. Balance the workouts across the week to allow proper recovery
-7. For each day, select 4-7 exercises that work well together
+7. **CRITICAL - Exercise Count:** For each day, select ${exercise_range ? `${exercise_range.min}-${exercise_range.max}` : '4-7'} main exercises that work well together
+   - This count is based on the user's fitness level (${fitnessLevels.join(', ')}) and session duration (${hours_per_session}h)
+   - ${exercise_range ? `Beginner: 5-6 exercises/hour, Intermediate: 7-8 exercises/hour, Advanced: 8 exercises/hour` : ''}
 8. Vary the exercises throughout the week for balanced development
-9. Consider the user's fitness level (${fitnessLevel}) when choosing exercise difficulty
+9. **CRITICAL - Exercise Difficulty Selection:**
+   - User's selected fitness levels: ${fitnessLevels.join(', ')}
+   - MAIN WORKOUT EXERCISES: Only select exercises matching the user's selected levels
+   - ${!fitnessLevels.includes('beginner') ? '⚠️ User did NOT select beginner - DO NOT include beginner exercises in main workout' : 'Include beginner exercises as user selected this level'}
+   - Match exercise difficulty to user's capabilities - respect their level selection
 10. Provide warm-up exercises (2-3 exercises from available list), cool-down, and workout tips for each day
 
 WARM-UP EXERCISE SELECTION:
 - Select 2-3 light, dynamic exercises from the available exercises list for warm-up
 - Choose exercises that prepare the muscles for the workout (target similar body parts)
 - Prefer bodyweight, band, or light dumbbell exercises for warm-up
-- Warm-up exercises should be easier/lighter than main workout exercises
+- Warm-up exercises CAN be beginner level regardless of user's main fitness level (warm-ups are always lighter)
 
 WORKOUT PLAN STRUCTURE:
 - For ${fitness_goals.includes('lose_weight') ? 'weight loss' : fitness_goals.includes('gain_muscle') ? 'muscle gain' : 'general fitness'}, structure workouts accordingly
@@ -583,7 +590,7 @@ OUTPUT FORMAT (VALID JSON):
 🚨 CRITICAL REQUIREMENTS - FAILURE TO COMPLY WILL RESULT IN REJECTION:
 1. **plan_name: DO NOT include 'Beginner', 'Intermediate', or 'Advanced' words. DO NOT use emojis.**
 2. ONLY use exercise IDs from the AVAILABLE EXERCISES list - do NOT make up exercise IDs (this applies to BOTH exercises and warm_up_exercises)
-3. Each day should have 4-7 main exercises + 2-3 warm-up exercises
+3. **Each day should have ${exercise_range ? `${exercise_range.min}-${exercise_range.max}` : '4-7'} main exercises + 2-3 warm-up exercises** - this is based on fitness level and duration
 4. Warm-up and cool-down time is INCLUDED in the estimated_duration_minutes
 5. **MANDATORY: Include 2-3 warm_up_exercises for each day** - select from available exercises list
 6. **MANDATORY: Create EXACTLY ${days_per_week} daily_workouts** - NO MORE, NO LESS

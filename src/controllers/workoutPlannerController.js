@@ -71,7 +71,7 @@ export async function generatePlanPreview(req, res) {
     const {
       fitness_goals,
       target_body_parts,
-      fitness_level,
+      fitness_levels,
       days_per_week,
       hours_per_session,
       selected_days
@@ -84,6 +84,10 @@ export async function generatePlanPreview(req, res) {
 
     if (!target_body_parts || !Array.isArray(target_body_parts) || target_body_parts.length === 0) {
       return res.status(400).json({ error: 'target_body_parts is required and must be a non-empty array' });
+    }
+
+    if (!fitness_levels || !Array.isArray(fitness_levels) || fitness_levels.length === 0) {
+      return res.status(400).json({ error: 'fitness_levels is required and must be a non-empty array' });
     }
 
     if (!days_per_week || days_per_week < 1 || days_per_week > 7) {
@@ -101,7 +105,7 @@ export async function generatePlanPreview(req, res) {
       userId,
       fitness_goals,
       target_body_parts,
-      fitness_level,
+      fitness_levels,
       days_per_week,
       hours_per_session,
       selected_days
@@ -128,7 +132,7 @@ export async function generatePlanPreview(req, res) {
 export async function finalizePlan(req, res) {
   try {
     const userId = req.user.id;
-    const { planPreview, userChoices } = req.body;
+    const { planPreview, userChoices, deletedExercises } = req.body;
 
     // Validate required fields
     if (!planPreview) {
@@ -145,7 +149,8 @@ export async function finalizePlan(req, res) {
     const savedPlan = await workoutPlannerService.finalizePlanPreview({
       userId,
       planPreview,
-      userChoices
+      userChoices,
+      deletedExercises
     });
 
     console.log(`✅ Plan finalized and saved: ${savedPlan.id}`);
