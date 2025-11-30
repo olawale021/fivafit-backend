@@ -231,11 +231,11 @@ export const scheduleUpcomingWorkoutReminders = () => {
 
 /**
  * Missed Workout Reminder - Phase 2
- * Runs at 8 PM daily to remind users of incomplete workouts
+ * Runs at 8:30 PM daily to remind users of incomplete workouts
  */
 export const scheduleMissedWorkoutReminders = () => {
-  // Run daily at 8 PM (20:00)
-  cron.schedule('0 20 * * *', async () => {
+  // Run daily at 8:30 PM (20:30)
+  cron.schedule('30 20 * * *', async () => {
     console.log('🔔 [Cron] Checking missed workout reminders...');
 
     try {
