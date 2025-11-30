@@ -186,9 +186,17 @@ export async function getUserPlans(req, res) {
 
     const plans = await workoutPlannerService.getUserPlans(userId, status);
 
+    // Add sync metadata for offline support
+    const metadata = {
+      last_modified: new Date().toISOString(),
+      count: plans.length,
+      synced_at: Date.now(),
+    };
+
     res.json({
       success: true,
-      data: plans
+      data: plans,
+      _metadata: metadata
     });
   } catch (error) {
     console.error('Error fetching user plans:', error);

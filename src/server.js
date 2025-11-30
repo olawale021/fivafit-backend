@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 import session from 'express-session'
 import passport from 'passport'
 import { supabase } from './config/supabase.js'
+import { startCronJobs, stopCronJobs } from './services/cronService.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import scanHistoryRoutes from './routes/scanHistory.js'
@@ -15,6 +16,7 @@ import notificationsRoutes from './routes/notifications.js'
 import challengesRoutes from './routes/challenges.js'
 import groupsRoutes from './routes/groups.js'
 import savedWorkoutsRoutes from './routes/savedWorkouts.js'
+import progressRoutes from './routes/progress.js'
 
 // Load environment variables
 dotenv.config()
@@ -124,6 +126,7 @@ app.use('/api/notifications', notificationsRoutes)
 app.use('/api/challenges', challengesRoutes)
 app.use('/api/groups', groupsRoutes)
 app.use('/api/saved-workouts', savedWorkoutsRoutes)
+app.use('/api/progress', progressRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -181,15 +184,29 @@ app.listen(PORT, () => {
     .catch(err => {
       console.error('❌ Supabase connection error:', err.message)
     })
+
+  // Start cron jobs for workout notifications (Phase 1 & 2 active)
+  // Set to 'phase1', 'phase2', 'phase3', or 'all'
+  // For development, you might want to skip cron jobs
+  if (process.env.NODE_ENV !== 'development' || process.env.ENABLE_CRON_JOBS === 'true') {
+    // Using 'all' to enable Phase 1 & Phase 2 cron jobs
+    // Phase 3 cron jobs are placeholders and will log warnings
+    startCronJobs('all')
+  } else {
+    console.log('⏸️  Cron jobs disabled in development mode')
+    console.log('   Set ENABLE_CRON_JOBS=true in .env to enable them')
+  }
 })
 
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Received SIGINT. Shutting down gracefully...')
+  stopCronJobs()
   process.exit(0)
 })
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Received SIGTERM. Shutting down gracefully...')
+  stopCronJobs()
   process.exit(0)
 })

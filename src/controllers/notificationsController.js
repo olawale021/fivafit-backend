@@ -1,15 +1,20 @@
 import { supabase } from '../config/supabase.js'
+import {
+  updatePushToken,
+  getNotificationPreferences,
+  updateNotificationPreferences
+} from '../services/pushNotificationService.js'
 
 /**
  * Get notifications for the current user
- * GET /api/notifications?limit=20&cursor=timestamp
+ * GET /api/notifications?limit=20&cursor=timestamp&category=social|workout
  */
 export const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id
-    const { limit = 20, cursor } = req.query
+    const { limit = 20, cursor, category } = req.query
 
-    console.log(`📬 Fetching notifications for user ${userId}`)
+    console.log(`📬 Fetching notifications for user ${userId}${category ? ` (category: ${category})` : ''}`)
 
     let query = supabase
       .from('notifications')
@@ -30,6 +35,11 @@ export const getNotifications = async (req, res) => {
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(parseInt(limit))
+
+    // Filter by category
+    if (category && (category === 'social' || category === 'workout')) {
+      query = query.eq('notification_category', category)
+    }
 
     // Cursor-based pagination
     if (cursor) {
@@ -66,12 +76,33 @@ export const getNotifications = async (req, res) => {
 
 /**
  * Get unread notifications count
- * GET /api/notifications/unread-count
+ * GET /api/notifications/unread-count?category=social|workout
  */
 export const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id
+    const { category } = req.query
 
+    // If category is specified, count from notifications table
+    if (category && (category === 'social' || category === 'workout')) {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('is_read', false)
+        .eq('notification_category', category)
+
+      if (error) throw error
+
+      return res.json({
+        success: true,
+        data: {
+          count: count || 0
+        }
+      })
+    }
+
+    // No category - return total from user table (faster)
     const { data: user, error } = await supabase
       .from('users')
       .select('unread_notifications_count')
@@ -203,6 +234,119 @@ export const markAllAsRead = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to mark all notifications as read',
+      message: error.message
+    })
+  }
+}
+
+// ============================================================================
+// PUSH NOTIFICATION ENDPOINTS
+// ============================================================================
+
+/**
+ * Register or update user's push notification token
+ * POST /api/notifications/register-push-token
+ */
+export const registerPushToken = async (req, res) => {
+  try {
+    const { pushToken } = req.body
+    const userId = req.user.id
+
+    if (!pushToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Push token is required'
+      })
+    }
+
+    console.log(`📱 Registering push token for user ${userId}`)
+
+    const success = await updatePushToken(userId, pushToken)
+
+    if (!success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to register push token'
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Push token registered successfully'
+    })
+  } catch (error) {
+    console.error('❌ Register push token error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to register push token',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Get user's notification preferences
+ * GET /api/notifications/preferences
+ */
+export const getPreferences = async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    console.log(`⚙️  Fetching notification preferences for user ${userId}`)
+
+    const preferences = await getNotificationPreferences(userId)
+
+    if (!preferences) {
+      return res.status(404).json({
+        success: false,
+        error: 'Notification preferences not found'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: preferences
+    })
+  } catch (error) {
+    console.error('❌ Get preferences error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get notification preferences',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Update user's notification preferences
+ * PUT /api/notifications/preferences
+ */
+export const updatePreferences = async (req, res) => {
+  try {
+    const userId = req.user.id
+    const updates = req.body
+
+    console.log(`⚙️  Updating notification preferences for user ${userId}`)
+
+    const updatedPreferences = await updateNotificationPreferences(userId, updates)
+
+    if (!updatedPreferences) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update notification preferences'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: updatedPreferences,
+      message: 'Notification preferences updated successfully'
+    })
+  } catch (error) {
+    console.error('❌ Update preferences error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update notification preferences',
       message: error.message
     })
   }

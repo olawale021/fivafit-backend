@@ -11,8 +11,11 @@ import {
   checkOnboardingStatus,
   isOnboardingUpdate,
   formatUserResponse,
-  handleAppleOAuth
+  handleAppleOAuth,
+  changeUserPassword,
+  deleteUserAccount
 } from '../services/authService.js'
+import { checkUsernameAvailability } from '../services/userService.js'
 
 /**
  * Auth Controller
@@ -576,6 +579,36 @@ export async function getUserStats(req, res) {
       console.error('❌ Error fetching workouts count:', workoutsError)
     }
 
+    // Get workouts this week (last 7 days)
+    const sevenDaysAgo = new Date()
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+    sevenDaysAgo.setHours(0, 0, 0, 0)
+
+    const { count: workoutsThisWeek, error: weekError } = await supabase
+      .from('workout_completions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('completed_at', sevenDaysAgo.toISOString())
+
+    if (weekError) {
+      console.error('❌ Error fetching workouts this week:', weekError)
+    }
+
+    // Get workouts this month
+    const startOfMonth = new Date()
+    startOfMonth.setDate(1)
+    startOfMonth.setHours(0, 0, 0, 0)
+
+    const { count: workoutsThisMonth, error: monthError } = await supabase
+      .from('workout_completions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('completed_at', startOfMonth.toISOString())
+
+    if (monthError) {
+      console.error('❌ Error fetching workouts this month:', monthError)
+    }
+
     // Get total posts count, followers, and following from user profile
     const { data: userData, error: userError } = await supabase
       .from('users')
@@ -633,7 +666,10 @@ export async function getUserStats(req, res) {
 
     const stats = {
       totalWorkouts: totalWorkouts || 0,
+      workoutsThisWeek: workoutsThisWeek || 0,
+      workoutsThisMonth: workoutsThisMonth || 0,
       currentStreak,
+      totalScans: 0, // TODO: Implement equipment scans tracking
       postsCount: userData?.posts_count || 0,
       followersCount: userData?.followers_count || 0,
       followingCount: userData?.following_count || 0
@@ -1075,6 +1111,183 @@ export async function getSuggestedUsers(req, res) {
       success: false,
       error: 'Failed to get suggested users',
       message: error.message
+    })
+  }
+}
+
+/**
+ * POST /api/auth/check-username
+ * Check if a username is available
+ */
+export async function checkUsername(req, res) {
+  try {
+    const { username } = req.body
+
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Username is required'
+      })
+    }
+
+    // Validate username format (3-20 characters, alphanumeric and underscores)
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Username must be 3-20 characters long and contain only letters, numbers, and underscores'
+      })
+    }
+
+    const available = await checkUsernameAvailability(username)
+
+    res.json({
+      success: true,
+      data: {
+        available
+      }
+    })
+  } catch (error) {
+    console.error('❌ Check username error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check username availability',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * PUT /api/auth/change-password
+ * Change user password
+ */
+export async function changePassword(req, res) {
+  try {
+    const { currentPassword, newPassword } = req.body
+    const user = req.user
+
+    // Validate input
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'Current password and new password are required'
+      })
+    }
+
+    // Validate new password
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid password',
+        message: 'New password must be at least 6 characters long'
+      })
+    }
+
+    // Check for special character
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword)
+    if (!hasSpecialChar) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid password',
+        message: 'New password must contain at least one special character'
+      })
+    }
+
+    // Change password
+    await changeUserPassword(user.id, currentPassword, newPassword)
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully'
+    })
+
+    console.log(`✅ Password changed for user: ${user.email}`)
+  } catch (error) {
+    console.error('❌ Change password error:', error)
+
+    if (error.message === 'OAUTH_USER') {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot change password',
+        message: 'You signed in with Google or Apple. Password change is not available for OAuth accounts.'
+      })
+    }
+
+    if (error.message === 'INVALID_PASSWORD') {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid password',
+        message: 'Current password is incorrect'
+      })
+    }
+
+    if (error.message === 'NO_PASSWORD') {
+      return res.status(400).json({
+        success: false,
+        error: 'No password set',
+        message: 'This account was created with Google or Apple. Please contact support.'
+      })
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to change password',
+      message: 'Internal server error during password change'
+    })
+  }
+}
+
+/**
+ * DELETE /api/auth/delete-account
+ * Delete user account permanently
+ */
+export async function deleteAccount(req, res) {
+  try {
+    const user = req.user
+    const { reason } = req.body
+
+    // Validate reason
+    if (!reason || reason.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Reason required',
+        message: 'Please provide a reason for deleting your account'
+      })
+    }
+
+    // Delete account
+    await deleteUserAccount(user.id, reason)
+
+    res.json({
+      success: true,
+      message: 'Account deleted successfully'
+    })
+
+    console.log(`✅ Account deleted for user: ${user.email} - Reason: ${reason}`)
+  } catch (error) {
+    console.error('❌ Delete account error:', error)
+
+    if (error.message === 'USER_NOT_FOUND') {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found',
+        message: 'User account not found'
+      })
+    }
+
+    if (error.message === 'DELETE_FAILED') {
+      return res.status(500).json({
+        success: false,
+        error: 'Delete failed',
+        message: 'Failed to delete account from database'
+      })
+    }
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete account',
+      message: 'Internal server error during account deletion'
     })
   }
 }

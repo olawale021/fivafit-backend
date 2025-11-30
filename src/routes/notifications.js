@@ -4,7 +4,10 @@ import {
   getNotifications,
   getUnreadCount,
   markAsRead,
-  markAllAsRead
+  markAllAsRead,
+  registerPushToken,
+  getPreferences,
+  updatePreferences
 } from '../controllers/notificationsController.js'
 
 const router = express.Router()
@@ -32,5 +35,23 @@ router.put('/read-all', authenticateToken, markAllAsRead)
  * Mark a notification as read
  */
 router.put('/:notificationId/read', authenticateToken, markAsRead)
+
+/**
+ * POST /api/notifications/register-push-token
+ * Register or update user's push notification token
+ */
+router.post('/register-push-token', authenticateToken, registerPushToken)
+
+/**
+ * GET /api/notifications/preferences
+ * Get user's notification preferences
+ */
+router.get('/preferences', authenticateToken, getPreferences)
+
+/**
+ * PUT /api/notifications/preferences
+ * Update user's notification preferences
+ */
+router.put('/preferences', authenticateToken, updatePreferences)
 
 export default router

@@ -16,7 +16,10 @@ import {
   uploadProfilePhoto,
   getOnboardingStatus,
   verifyToken,
-  refreshToken
+  refreshToken,
+  checkUsername,
+  changePassword,
+  deleteAccount
 } from '../controllers/authController.js'
 
 // Configure multer for memory storage
@@ -140,5 +143,23 @@ router.post('/verify', verifyToken)
  * Refresh an access token (handled by Supabase client-side usually)
  */
 router.post('/refresh', refreshToken)
+
+/**
+ * POST /api/auth/check-username
+ * Check if a username is available
+ */
+router.post('/check-username', checkUsername)
+
+/**
+ * PUT /api/auth/change-password
+ * Change user password (requires authentication)
+ */
+router.put('/change-password', authenticateJWT, changePassword)
+
+/**
+ * DELETE /api/auth/delete-account
+ * Delete user account permanently (requires authentication)
+ */
+router.delete('/delete-account', authenticateJWT, deleteAccount)
 
 export default router

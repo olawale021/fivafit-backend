@@ -79,9 +79,17 @@ export async function getUserSavedWorkouts(req, res) {
 
     const workouts = await savedWorkoutsService.getUserSavedWorkouts(userId, filters);
 
+    // Add sync metadata for offline support
+    const metadata = {
+      last_modified: new Date().toISOString(),
+      count: workouts.length,
+      synced_at: Date.now(),
+    };
+
     res.json({
       success: true,
       data: workouts,
+      _metadata: metadata
     });
   } catch (error) {
     console.error('Error in getUserSavedWorkouts controller:', error);
@@ -248,9 +256,17 @@ export async function getUserSavedExercises(req, res) {
 
     const exercises = await savedWorkoutsService.getUserSavedExercises(userId, filters);
 
+    // Add sync metadata for offline support
+    const metadata = {
+      last_modified: new Date().toISOString(),
+      count: exercises.length,
+      synced_at: Date.now(),
+    };
+
     res.json({
       success: true,
       data: exercises,
+      _metadata: metadata
     });
   } catch (error) {
     console.error('Error in getUserSavedExercises controller:', error);

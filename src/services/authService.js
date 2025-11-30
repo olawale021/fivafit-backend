@@ -1,4 +1,5 @@
-import { generateJWT } from '../utils/auth.js'
+import { generateJWT, hashPassword } from '../utils/auth.js'
+import { supabase } from '../config/supabase.js'
 import {
   createUser,
   findUserByEmail,
@@ -79,7 +80,7 @@ export function validateProfileUpdateData(updates) {
   }
 
   if (updates.fitness_goal) {
-    const validGoals = ['weight_loss', 'muscle_building', 'general_fitness', 'flexibility', 'athletic_performance', 'endurance', 'rehabilitation']
+    const validGoals = ['weight_loss', 'muscle_building', 'general_fitness', 'flexibility', 'athletic_performance', 'endurance', 'rehabilitation', 'strength']
 
     // Handle both old format (string) and new format (array)
     let goals = []
@@ -407,6 +408,8 @@ export function formatUserResponse(user, includeFullProfile = false) {
   if (includeFullProfile) {
     return {
       ...baseResponse,
+      google_id: user.google_id,
+      apple_id: user.apple_id,
       date_of_birth: user.date_of_birth,
       gender: user.gender,
       height_cm: user.height_cm,
@@ -425,4 +428,82 @@ export function formatUserResponse(user, includeFullProfile = false) {
   }
 
   return baseResponse
+}
+
+/**
+ * Change user password
+ */
+export async function changeUserPassword(userId, currentPassword, newPassword) {
+  // Get user
+  const user = await findUserById(userId)
+
+  if (!user) {
+    throw new Error('USER_NOT_FOUND')
+  }
+
+  // Check if user is OAuth user (Google or Apple)
+  if (user.google_id || user.apple_id) {
+    throw new Error('OAUTH_USER')
+  }
+
+  // Check if user has password set
+  if (!user.password_hash) {
+    throw new Error('NO_PASSWORD')
+  }
+
+  // Verify current password
+  const isPasswordValid = await verifyPassword(currentPassword, user.password_hash)
+  if (!isPasswordValid) {
+    throw new Error('INVALID_PASSWORD')
+  }
+
+  // Hash new password
+  const newPasswordHash = await hashPassword(newPassword)
+
+  // Update password
+  await updateUser(userId, { password_hash: newPasswordHash })
+
+  return true
+}
+
+/**
+ * Delete user account
+ */
+export async function deleteUserAccount(userId, reason) {
+  // Get user
+  const user = await findUserById(userId)
+
+  if (!user) {
+    throw new Error('USER_NOT_FOUND')
+  }
+
+  // Save deletion reason to account_deletions table for analytics
+  const { error: insertError } = await supabase
+    .from('account_deletions')
+    .insert({
+      user_id: userId,
+      email: user.email,
+      username: user.username,
+      reason: reason || 'No reason provided',
+      account_created_at: user.created_at,
+      last_login: user.last_login
+    })
+
+  if (insertError) {
+    console.error('❌ Error saving deletion reason:', insertError)
+    // Don't fail deletion if we can't save the reason
+  }
+
+  // Delete user from database
+  const { error } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', userId)
+
+  if (error) {
+    console.error('❌ Error deleting user:', error)
+    throw new Error('DELETE_FAILED')
+  }
+
+  return true
 }
