@@ -75,14 +75,13 @@ export const scheduleDailyWorkoutReminders = () => {
 
       for (const userPref of users || []) {
         try {
-          // Get today's scheduled workout for this user
+          // Get today's scheduled workout for this user via workout_plans JOIN
           const { data: workout, error: workoutError } = await supabase
             .from('daily_workouts')
-            .select('*')
-            .eq('user_id', userPref.user_id)
+            .select('*, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
             .eq('scheduled_date', today)
-            .eq('completed', false)
-            .is('workout_type', null) // Not a rest day
+            .eq('is_completed', false)
             .single();
 
           if (workoutError && workoutError.code !== 'PGRST116') {
@@ -96,11 +95,11 @@ export const scheduleDailyWorkoutReminders = () => {
             await createWorkoutReminderNotification(userPref.user_id, workout, 'daily');
             console.log(`✅ Daily reminder sent to user ${userPref.user_id}`);
           } else {
-            // Check if it's a rest day
+            // Check if it's a rest day via workout_plans JOIN
             const { data: restDay } = await supabase
               .from('daily_workouts')
-              .select('*')
-              .eq('user_id', userPref.user_id)
+              .select('*, workout_plans!inner(user_id)')
+              .eq('workout_plans.user_id', userPref.user_id)
               .eq('scheduled_date', today)
               .eq('workout_type', 'rest')
               .single();
@@ -159,14 +158,13 @@ export const scheduleUpcomingWorkoutReminders = () => {
         try {
           const reminderMinutes = userPref.upcoming_reminder_minutes || 60;
 
-          // Get workouts scheduled for today
+          // Get workouts scheduled for today via workout_plans JOIN
           const { data: workouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('*')
-            .eq('user_id', userPref.user_id)
+            .select('*, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
             .eq('scheduled_date', today)
-            .eq('completed', false)
-            .is('workout_type', null); // Not a rest day
+            .eq('is_completed', false)
 
           if (workoutsError) {
             console.error(`❌ Error fetching workouts for user ${userPref.user_id}:`, workoutsError);
@@ -258,13 +256,13 @@ export const scheduleMissedWorkoutReminders = () => {
 
       for (const userPref of users || []) {
         try {
-          // Get today's incomplete non-rest workouts
+          // Get today's incomplete non-rest workouts via workout_plans JOIN
           const { data: missedWorkouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('*')
-            .eq('user_id', userPref.user_id)
+            .select('*, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
             .eq('scheduled_date', today)
-            .eq('completed', false)
+            .eq('is_completed', false)
             .is('workout_type', null); // Not a rest day
 
           if (workoutsError) {
@@ -359,12 +357,12 @@ export const scheduleWeeklyGoalCheck = () => {
 
           const weeklyGoal = user.weekly_workout_goal;
 
-          // Count completed workouts this week
+          // Count completed workouts this week via workout_plans JOIN
           const { data: workouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('id, workout_name, duration_minutes, calories_burned')
-            .eq('user_id', userPref.user_id)
-            .eq('completed', true)
+            .select('id, workout_name, duration_minutes, calories_burned, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
+            .eq('is_completed', true)
             .gte('scheduled_date', weekStartStr)
             .lte('scheduled_date', weekEndStr)
             .is('workout_type', null); // Not rest days
@@ -457,12 +455,12 @@ export const scheduleMonthlyMilestoneCheck = () => {
 
       for (const userPref of users || []) {
         try {
-          // Count completed workouts this month
+          // Count completed workouts this month via workout_plans JOIN
           const { data: workouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('id, duration_minutes, calories_burned')
-            .eq('user_id', userPref.user_id)
-            .eq('completed', true)
+            .select('id, duration_minutes, calories_burned, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
+            .eq('is_completed', true)
             .gte('scheduled_date', monthStartStr)
             .lte('scheduled_date', monthEndStr)
             .is('workout_type', null); // Not rest days
@@ -557,12 +555,12 @@ export const scheduleWeeklyProgressReport = () => {
 
       for (const userPref of users || []) {
         try {
-          // Get this week's completed workouts
+          // Get this week's completed workouts via workout_plans JOIN
           const { data: workouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('id, workout_name, duration_minutes, calories_burned, difficulty, scheduled_time')
-            .eq('user_id', userPref.user_id)
-            .eq('completed', true)
+            .select('id, workout_name, duration_minutes, calories_burned, difficulty, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
+            .eq('is_completed', true)
             .gte('scheduled_date', weekStartStr)
             .lte('scheduled_date', weekEndStr)
             .is('workout_type', null); // Not rest days
@@ -667,12 +665,12 @@ export const scheduleInactiveUserAlerts = () => {
         try {
           const inactiveThreshold = userPref.inactive_alert_threshold || 3; // Default 3 days
 
-          // Get user's last completed workout
+          // Get user's last completed workout via workout_plans JOIN
           const { data: lastWorkout, error: workoutError } = await supabase
             .from('daily_workouts')
-            .select('scheduled_date, workout_name, completed_at')
-            .eq('user_id', userPref.user_id)
-            .eq('completed', true)
+            .select('scheduled_date, workout_name, completed_at, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
+            .eq('is_completed', true)
             .is('workout_type', null) // Not rest days
             .order('scheduled_date', { ascending: false })
             .limit(1)
@@ -771,12 +769,12 @@ export const scheduleRecoveryReminders = () => {
           sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
           const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
 
-          // Get completed workouts in the last 7 days
+          // Get completed workouts in the last 7 days via workout_plans JOIN
           const { data: recentWorkouts, error: workoutsError } = await supabase
             .from('daily_workouts')
-            .select('scheduled_date, duration_minutes')
-            .eq('user_id', userPref.user_id)
-            .eq('completed', true)
+            .select('scheduled_date, duration_minutes, workout_plans!inner(user_id)')
+            .eq('workout_plans.user_id', userPref.user_id)
+            .eq('is_completed', true)
             .gte('scheduled_date', sevenDaysAgoStr)
             .lte('scheduled_date', today)
             .is('workout_type', null) // Not rest days
