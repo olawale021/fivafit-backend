@@ -98,7 +98,7 @@ const getPushNotificationData = (type, actorName, postId, commentId) => {
   switch (type) {
     case 'like':
       return {
-        title: 'New Like',
+        title: '❤️ New Like',
         body: `${actorName} liked your workout post`,
         data: {
           type: 'like',
@@ -110,7 +110,7 @@ const getPushNotificationData = (type, actorName, postId, commentId) => {
 
     case 'comment':
       return {
-        title: 'New Comment',
+        title: '💬 New Comment',
         body: `${actorName} commented on your post`,
         data: {
           type: 'comment',
@@ -123,7 +123,7 @@ const getPushNotificationData = (type, actorName, postId, commentId) => {
 
     case 'reply':
       return {
-        title: 'New Reply',
+        title: '↩️ New Reply',
         body: `${actorName} replied to your comment`,
         data: {
           type: 'reply',
@@ -136,7 +136,7 @@ const getPushNotificationData = (type, actorName, postId, commentId) => {
 
     case 'follow':
       return {
-        title: 'New Follower',
+        title: '👤 New Follower',
         body: `${actorName} started following you`,
         data: {
           type: 'follow',
