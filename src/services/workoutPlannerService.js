@@ -1402,9 +1402,10 @@ async function updatePlanCompletionStats(planId) {
       updated_at: new Date().toISOString()
     };
 
-    // If all workouts completed, mark plan as complete
+    // If all workouts completed, mark plan as complete and deactivate
     if (count >= plan.total_workouts) {
       updateData.completed_at = new Date().toISOString();
+      updateData.is_active = false; // Deactivate completed plans
     }
 
     const { error: updateError } = await supabase
@@ -1686,6 +1687,321 @@ export async function updateUserPreferences(userId, updates) {
     return data;
   } catch (error) {
     console.error('Error updating user preferences:', error);
+    throw error;
+  }
+}
+
+// ============================================================================
+// SKIP TRACKING
+// ============================================================================
+
+/**
+ * Mark a workout as skipped
+ */
+export async function skipWorkout(userId, dailyWorkoutId, reason = null) {
+  try {
+    // First, verify the workout belongs to this user's plan
+    const { data: workout, error: fetchError } = await supabase
+      .from('daily_workouts')
+      .select(`
+        *,
+        workout_plans!inner(user_id)
+      `)
+      .eq('id', dailyWorkoutId)
+      .single();
+
+    if (fetchError) throw fetchError;
+    if (!workout) throw new Error('Workout not found');
+    if (workout.workout_plans.user_id !== userId) {
+      throw new Error('Unauthorized');
+    }
+
+    // Check if already completed
+    if (workout.is_completed) {
+      throw new Error('Cannot skip a completed workout');
+    }
+
+    // Check if already skipped
+    if (workout.is_skipped) {
+      return { message: 'Workout already marked as skipped', workout };
+    }
+
+    // Mark as skipped
+    const { data: updated, error } = await supabase
+      .from('daily_workouts')
+      .update({
+        is_skipped: true,
+        skipped_at: new Date().toISOString(),
+        completion_notes: reason || workout.completion_notes
+      })
+      .eq('id', dailyWorkoutId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`✓ Workout ${dailyWorkoutId} marked as skipped for user ${userId}`);
+
+    return updated;
+  } catch (error) {
+    console.error('Error skipping workout:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all skipped workouts for a user
+ */
+export async function getSkippedWorkouts(userId, limit = 20, offset = 0) {
+  try {
+    const { data, error } = await supabase
+      .from('daily_workouts')
+      .select(`
+        *,
+        workout_plans!inner(
+          id,
+          plan_name,
+          user_id
+        )
+      `)
+      .eq('workout_plans.user_id', userId)
+      .eq('is_skipped', true)
+      .order('skipped_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    return {
+      workouts: data || [],
+      total: data?.length || 0,
+      limit,
+      offset
+    };
+  } catch (error) {
+    console.error('Error fetching skipped workouts:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get skip statistics for a user
+ */
+export async function getSkipStats(userId) {
+  try {
+    // Get all plans for this user
+    const { data: plans, error: plansError } = await supabase
+      .from('workout_plans')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (plansError) throw plansError;
+
+    const planIds = plans.map(p => p.id);
+
+    // Get total workouts, completed, and skipped counts
+    const { data: workouts, error: workoutsError } = await supabase
+      .from('daily_workouts')
+      .select('is_completed, is_skipped, scheduled_date')
+      .in('workout_plan_id', planIds);
+
+    if (workoutsError) throw workoutsError;
+
+    const total = workouts.length;
+    const completed = workouts.filter(w => w.is_completed).length;
+    const skipped = workouts.filter(w => w.is_skipped).length;
+    const pending = workouts.filter(w => !w.is_completed && !w.is_skipped).length;
+
+    // Calculate skip rate
+    const skipRate = total > 0 ? ((skipped / total) * 100).toFixed(1) : 0;
+    const completionRate = total > 0 ? ((completed / total) * 100).toFixed(1) : 0;
+
+    // Get recent skips (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const recentSkips = workouts.filter(w => {
+      if (!w.is_skipped || !w.scheduled_date) return false;
+      const scheduledDate = new Date(w.scheduled_date);
+      return scheduledDate >= thirtyDaysAgo;
+    }).length;
+
+    return {
+      total_workouts: total,
+      completed_workouts: completed,
+      skipped_workouts: skipped,
+      pending_workouts: pending,
+      skip_rate: parseFloat(skipRate),
+      completion_rate: parseFloat(completionRate),
+      recent_skips_30_days: recentSkips
+    };
+  } catch (error) {
+    console.error('Error fetching skip stats:', error);
+    throw error;
+  }
+}
+
+/**
+ * Auto-skip past incomplete workouts
+ * This should be called daily by a cron job
+ */
+export async function autoSkipPastWorkouts(userId = null) {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let query = supabase
+      .from('daily_workouts')
+      .select(`
+        id,
+        scheduled_date,
+        workout_plans!inner(user_id)
+      `)
+      .eq('is_completed', false)
+      .eq('is_skipped', false)
+      .not('scheduled_date', 'is', null)
+      .lt('scheduled_date', today.toISOString().split('T')[0]);
+
+    // If userId provided, only auto-skip for that user
+    if (userId) {
+      query = query.eq('workout_plans.user_id', userId);
+    }
+
+    const { data: pastWorkouts, error: fetchError } = await query;
+
+    if (fetchError) throw fetchError;
+
+    if (!pastWorkouts || pastWorkouts.length === 0) {
+      return { skipped_count: 0, workouts: [] };
+    }
+
+    // Mark all as skipped
+    const workoutIds = pastWorkouts.map(w => w.id);
+
+    const { data: updated, error: updateError } = await supabase
+      .from('daily_workouts')
+      .update({
+        is_skipped: true,
+        skipped_at: new Date().toISOString(),
+        completion_notes: 'Auto-skipped (past due date)'
+      })
+      .in('id', workoutIds)
+      .select();
+
+    if (updateError) throw updateError;
+
+    console.log(`✓ Auto-skipped ${updated.length} past workouts${userId ? ` for user ${userId}` : ''}`);
+
+    return {
+      skipped_count: updated.length,
+      workouts: updated
+    };
+  } catch (error) {
+    console.error('Error auto-skipping past workouts:', error);
+    throw error;
+  }
+}
+
+/**
+ * Auto-deactivate workout plans whose last workout date has passed
+ * This runs daily to ensure expired plans are automatically deactivated
+ * @param {string} userId - Optional user ID to scope the operation
+ * @returns {Object} - Deactivation results
+ */
+export async function autoDeactivateExpiredPlans(userId = null) {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Find all active plans
+    let query = supabase
+      .from('workout_plans')
+      .select(`
+        id,
+        plan_name,
+        user_id,
+        is_active,
+        daily_workouts!inner(scheduled_date)
+      `)
+      .eq('is_active', true)
+      .is('completed_at', null);
+
+    // If userId provided, only check for that user
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data: activePlans, error: fetchError } = await query;
+
+    if (fetchError) throw fetchError;
+
+    if (!activePlans || activePlans.length === 0) {
+      return { deactivated_count: 0, plans: [] };
+    }
+
+    // Filter plans whose last workout date has passed
+    const expiredPlanIds = [];
+    const expiredPlans = [];
+
+    for (const plan of activePlans) {
+      if (!plan.daily_workouts || plan.daily_workouts.length === 0) continue;
+
+      // Find the latest scheduled_date
+      const scheduledDates = plan.daily_workouts
+        .map(w => w.scheduled_date)
+        .filter(date => date !== null);
+
+      if (scheduledDates.length === 0) continue;
+
+      const latestDate = new Date(Math.max(...scheduledDates.map(d => new Date(d).getTime())));
+      latestDate.setHours(0, 0, 0, 0);
+
+      // If the latest workout date has passed, mark for deactivation
+      if (latestDate < today) {
+        expiredPlanIds.push(plan.id);
+        expiredPlans.push({
+          id: plan.id,
+          plan_name: plan.plan_name,
+          last_workout_date: latestDate.toISOString().split('T')[0]
+        });
+      }
+    }
+
+    if (expiredPlanIds.length === 0) {
+      return { deactivated_count: 0, plans: [] };
+    }
+
+    // Deactivate expired plans and mark them as completed (done)
+    // Even if not all workouts were completed, the plan period has ended
+    const { data: deactivated, error: updateError } = await supabase
+      .from('workout_plans')
+      .update({
+        is_active: false,
+        completed_at: new Date().toISOString(), // Mark as done when expired
+        updated_at: new Date().toISOString()
+      })
+      .in('id', expiredPlanIds)
+      .select('id, plan_name, user_id, completed_workouts, total_workouts');
+
+    if (updateError) throw updateError;
+
+    console.log(`✓ Auto-deactivated and marked as done ${deactivated.length} expired plans${userId ? ` for user ${userId}` : ''}`);
+
+    // Enhance the results with completion stats
+    const enhancedPlans = expiredPlans.map(plan => {
+      const fullPlan = deactivated.find(p => p.id === plan.id);
+      return {
+        ...plan,
+        completed_workouts: fullPlan?.completed_workouts || 0,
+        total_workouts: fullPlan?.total_workouts || 0
+      };
+    });
+
+    return {
+      deactivated_count: deactivated.length,
+      plans: enhancedPlans
+    };
+  } catch (error) {
+    console.error('Error auto-deactivating expired plans:', error);
     throw error;
   }
 }

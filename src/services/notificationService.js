@@ -61,7 +61,7 @@ export const createNotification = async ({ userId, actorId, type, postId, commen
     })
 
     // Send push notification
-    const pushNotificationData = getPushNotificationData(type, actorName, postId, commentId)
+    const pushNotificationData = getPushNotificationData(type, actorName, actorId, postId, commentId)
     if (pushNotificationData) {
       const pushResult = await sendPushNotification(userId, pushNotificationData)
 
@@ -90,11 +90,12 @@ export const createNotification = async ({ userId, actorId, type, postId, commen
  * Get push notification title and body based on type
  * @param {string} type - Notification type
  * @param {string} actorName - Actor's username or name
+ * @param {string} actorId - Actor's user ID
  * @param {string} postId - Post ID
  * @param {string} commentId - Comment ID
  * @returns {Object} Push notification data
  */
-const getPushNotificationData = (type, actorName, postId, commentId) => {
+const getPushNotificationData = (type, actorName, actorId, postId, commentId) => {
   switch (type) {
     case 'like':
       return {
@@ -140,6 +141,7 @@ const getPushNotificationData = (type, actorName, postId, commentId) => {
         body: `${actorName} started following you`,
         data: {
           type: 'follow',
+          actorId,
           screen: 'profile'
         },
         channelId: 'social-notifications'

@@ -2,7 +2,8 @@ import { supabase } from '../config/supabase.js'
 import {
   updatePushToken,
   getNotificationPreferences,
-  updateNotificationPreferences
+  updateNotificationPreferences,
+  sendPushNotification
 } from '../services/pushNotificationService.js'
 
 /**
@@ -347,6 +348,50 @@ export const updatePreferences = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to update notification preferences',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Send a test push notification
+ * POST /api/notifications/test-push
+ */
+export const sendTestPushNotification = async (req, res) => {
+  try {
+    const userId = req.user.id
+
+    console.log(`🧪 Sending test push notification to user ${userId}`)
+
+    const result = await sendPushNotification(userId, {
+      title: 'Test Notification 🧪',
+      body: 'This is a test push notification from your backend!',
+      data: {
+        type: 'test',
+        timestamp: new Date().toISOString()
+      },
+      channelId: 'workout-notifications'
+    })
+
+    if (!result) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to send test push notification. Check if you have a valid push token registered.'
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Test push notification sent successfully',
+      data: {
+        ticket: result
+      }
+    })
+  } catch (error) {
+    console.error('❌ Send test push notification error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to send test push notification',
       message: error.message
     })
   }

@@ -862,6 +862,56 @@ export const scheduleRecoveryReminders = () => {
   console.log('✅ Recovery reminder cron job scheduled (runs daily at 7 PM)');
 };
 
+/**
+ * Auto-Skip Past Workouts - Skip Tracking
+ * Runs daily at 12:01 AM to mark past incomplete workouts as skipped
+ */
+export const scheduleAutoSkipPastWorkouts = () => {
+  // Run daily at 12:01 AM (00:01)
+  cron.schedule('1 0 * * *', async () => {
+    console.log('🔔 [Cron] Auto-skipping past workouts...');
+
+    try {
+      // Import dynamically to avoid circular dependency
+      const { autoSkipPastWorkouts } = await import('./workoutPlannerService.js');
+
+      const result = await autoSkipPastWorkouts();
+
+      console.log(`✅ [Cron] Auto-skipped ${result.skipped_count} past workouts`);
+
+    } catch (error) {
+      console.error('❌ [Cron] Auto-skip past workouts error:', error);
+    }
+  });
+
+  console.log('✅ Auto-skip past workouts cron job scheduled (runs daily at 12:01 AM)');
+};
+
+/**
+ * Auto-Deactivate Expired Plans
+ * Runs daily at 12:05 AM to deactivate plans whose last workout date has passed
+ */
+export const scheduleAutoDeactivateExpiredPlans = () => {
+  // Run daily at 12:05 AM (00:05)
+  cron.schedule('5 0 * * *', async () => {
+    console.log('🔔 [Cron] Auto-deactivating expired plans...');
+
+    try {
+      // Import dynamically to avoid circular dependency
+      const { autoDeactivateExpiredPlans } = await import('./workoutPlannerService.js');
+
+      const result = await autoDeactivateExpiredPlans();
+
+      console.log(`✅ [Cron] Auto-deactivated ${result.deactivated_count} expired plans`);
+
+    } catch (error) {
+      console.error('❌ [Cron] Auto-deactivate expired plans error:', error);
+    }
+  });
+
+  console.log('✅ Auto-deactivate expired plans cron job scheduled (runs daily at 12:05 AM)');
+};
+
 // ============================================================================
 // CRON JOB MANAGER
 // ============================================================================
@@ -879,6 +929,8 @@ export const startCronJobs = (phase = 'phase1') => {
     console.log('📋 PHASE 1: Core Reminders');
     scheduleDailyWorkoutReminders();
     scheduleUpcomingWorkoutReminders();
+    scheduleAutoSkipPastWorkouts(); // Auto-skip past workouts
+    scheduleAutoDeactivateExpiredPlans(); // Auto-deactivate expired plans
     console.log('');
   }
 
@@ -921,5 +973,7 @@ export default {
   scheduleMonthlyMilestoneCheck,
   scheduleWeeklyProgressReport,
   scheduleInactiveUserAlerts,
-  scheduleRecoveryReminders
+  scheduleRecoveryReminders,
+  scheduleAutoSkipPastWorkouts,
+  scheduleAutoDeactivateExpiredPlans
 };

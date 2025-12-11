@@ -7,7 +7,8 @@ import {
   markAllAsRead,
   registerPushToken,
   getPreferences,
-  updatePreferences
+  updatePreferences,
+  sendTestPushNotification
 } from '../controllers/notificationsController.js'
 
 const router = express.Router()
@@ -53,5 +54,11 @@ router.get('/preferences', authenticateToken, getPreferences)
  * Update user's notification preferences
  */
 router.put('/preferences', authenticateToken, updatePreferences)
+
+/**
+ * POST /api/notifications/test-push
+ * Send a test push notification to the current user
+ */
+router.post('/test-push', authenticateToken, sendTestPushNotification)
 
 export default router

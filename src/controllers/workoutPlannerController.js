@@ -1,4 +1,5 @@
 import * as workoutPlannerService from '../services/workoutPlannerService.js';
+import generationJobService from '../services/generationJobService.js';
 
 // ============================================================================
 // WORKOUT PLAN GENERATION
@@ -126,6 +127,69 @@ export async function generatePlanPreview(req, res) {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to generate plan preview'
+    });
+  }
+}
+
+/**
+ * Generate a workout plan ASYNC (returns job ID immediately, processes in background)
+ * This allows users to minimize the app while generation continues
+ */
+export async function generatePlanAsync(req, res) {
+  try {
+    const userId = req.user.id;
+    const requestData = req.body;
+
+    // Validate required fields (same as generatePlanPreview)
+    if (!requestData.fitness_goals || !Array.isArray(requestData.fitness_goals) || requestData.fitness_goals.length === 0) {
+      return res.status(400).json({ error: 'fitness_goals is required and must be a non-empty array' });
+    }
+
+    if (!requestData.target_body_parts || !Array.isArray(requestData.target_body_parts) || requestData.target_body_parts.length === 0) {
+      return res.status(400).json({ error: 'target_body_parts is required and must be a non-empty array' });
+    }
+
+    console.log(`🚀 Creating async generation job for user ${userId}...`);
+
+    // Create job and start processing in background
+    const job = await generationJobService.createJob(userId, requestData);
+
+    res.status(202).json({
+      success: true,
+      data: {
+        job_id: job.id,
+        status: job.status,
+        message: 'Generation started. You can minimize the app - we\'ll notify you when it\'s ready!'
+      }
+    });
+  } catch (error) {
+    console.error('Error creating generation job:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to create generation job'
+    });
+  }
+}
+
+/**
+ * Get status and result of a generation job
+ */
+export async function getGenerationJob(req, res) {
+  try {
+    const userId = req.user.id;
+    const { jobId } = req.params;
+
+    const job = await generationJobService.getJob(jobId, userId);
+
+    res.status(200).json({
+      success: true,
+      data: job
+    });
+  } catch (error) {
+    console.error('Error getting generation job:', error);
+    res.status(error.message === 'Job not found' ? 404 : 500).json({
+      success: false,
+      error: error.message || 'Failed to get generation job'
     });
   }
 }
@@ -737,6 +801,127 @@ export async function createUserPreferences(req, res) {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to create preferences'
+    });
+  }
+}
+
+// ============================================================================
+// SKIP TRACKING
+// ============================================================================
+
+/**
+ * Mark a workout as skipped
+ */
+export async function skipWorkout(req, res) {
+  try {
+    const userId = req.user.id;
+    const { dailyWorkoutId } = req.params;
+    const { reason } = req.body;
+
+    const result = await workoutPlannerService.skipWorkout(userId, dailyWorkoutId, reason);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Workout marked as skipped'
+    });
+  } catch (error) {
+    console.error('Error skipping workout:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to skip workout'
+    });
+  }
+}
+
+/**
+ * Get all skipped workouts for the user
+ */
+export async function getSkippedWorkouts(req, res) {
+  try {
+    const userId = req.user.id;
+    const { limit = 20, offset = 0 } = req.query;
+
+    const skipped = await workoutPlannerService.getSkippedWorkouts(userId, parseInt(limit), parseInt(offset));
+
+    res.json({
+      success: true,
+      data: skipped
+    });
+  } catch (error) {
+    console.error('Error fetching skipped workouts:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch skipped workouts'
+    });
+  }
+}
+
+/**
+ * Get skip statistics for the user
+ */
+export async function getSkipStats(req, res) {
+  try {
+    const userId = req.user.id;
+
+    const stats = await workoutPlannerService.getSkipStats(userId);
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error fetching skip stats:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch skip statistics'
+    });
+  }
+}
+
+/**
+ * Auto-skip past incomplete workouts (called by cron job or manually)
+ */
+export async function autoSkipPastWorkouts(req, res) {
+  try {
+    const userId = req.user.id;
+
+    const result = await workoutPlannerService.autoSkipPastWorkouts(userId);
+
+    res.json({
+      success: true,
+      data: result,
+      message: `${result.skipped_count} past workouts marked as skipped`
+    });
+  } catch (error) {
+    console.error('Error auto-skipping past workouts:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to auto-skip past workouts'
+    });
+  }
+}
+
+/**
+ * Auto-deactivate expired workout plans
+ * POST /api/workout-planner/auto-deactivate
+ */
+export async function autoDeactivateExpiredPlans(req, res) {
+  try {
+    const userId = req.user.id;
+
+    const result = await workoutPlannerService.autoDeactivateExpiredPlans(userId);
+
+    res.json({
+      success: true,
+      data: result,
+      message: `${result.deactivated_count} expired plans deactivated`
+    });
+  } catch (error) {
+    console.error('Error auto-deactivating expired plans:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to auto-deactivate expired plans'
     });
   }
 }

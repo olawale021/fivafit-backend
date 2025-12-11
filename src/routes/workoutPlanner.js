@@ -43,6 +43,42 @@ router.post('/generate', workoutPlannerController.generateWorkoutPlan);
 router.post('/generate-preview', workoutPlannerController.generatePlanPreview);
 
 /**
+ * POST /api/workout-planner/generate-async
+ * Generate a workout plan ASYNC (returns job ID immediately, processes in background)
+ * This allows users to minimize the app while generation continues
+ *
+ * Body: Same as /generate-preview
+ *
+ * Response: {
+ *   success: true,
+ *   data: {
+ *     job_id: "uuid",
+ *     status: "pending",
+ *     message: "Generation started..."
+ *   }
+ * }
+ */
+router.post('/generate-async', workoutPlannerController.generatePlanAsync);
+
+/**
+ * GET /api/workout-planner/jobs/:jobId
+ * Get status and result of an async generation job
+ *
+ * Response: {
+ *   success: true,
+ *   data: {
+ *     id: "uuid",
+ *     status: "pending|processing|completed|failed",
+ *     created_at: "timestamp",
+ *     completed_at: "timestamp",
+ *     result_data: { ... }, // plan preview (when completed)
+ *     error_message: "..." // when failed
+ *   }
+ * }
+ */
+router.get('/jobs/:jobId', workoutPlannerController.getGenerationJob);
+
+/**
  * POST /api/workout-planner/finalize
  * Finalize and save user's customized workout plan
  *
@@ -217,5 +253,46 @@ router.put('/preferences', workoutPlannerController.updateUserPreferences);
  * Create initial user preferences
  */
 router.post('/preferences', workoutPlannerController.createUserPreferences);
+
+// ============================================================================
+// SKIP TRACKING
+// ============================================================================
+
+/**
+ * POST /api/workout-planner/skip/:dailyWorkoutId
+ * Mark a workout as skipped
+ *
+ * Body: {
+ *   reason: "Too busy" // optional
+ * }
+ */
+router.post('/skip/:dailyWorkoutId', workoutPlannerController.skipWorkout);
+
+/**
+ * GET /api/workout-planner/skipped
+ * Get all skipped workouts for the user
+ * Query params: ?limit=20&offset=0
+ */
+router.get('/skipped', workoutPlannerController.getSkippedWorkouts);
+
+/**
+ * GET /api/workout-planner/skip-stats
+ * Get skip statistics for the user
+ */
+router.get('/skip-stats', workoutPlannerController.getSkipStats);
+
+/**
+ * POST /api/workout-planner/auto-skip
+ * Auto-skip past incomplete workouts
+ * (This can be called by a cron job or manually)
+ */
+router.post('/auto-skip', workoutPlannerController.autoSkipPastWorkouts);
+
+/**
+ * POST /api/workout-planner/auto-deactivate
+ * Auto-deactivate expired workout plans
+ * (This can be called by a cron job or manually)
+ */
+router.post('/auto-deactivate', workoutPlannerController.autoDeactivateExpiredPlans);
 
 export default router;

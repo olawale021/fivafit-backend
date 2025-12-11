@@ -10,7 +10,7 @@ import {
   searchUsers,
   getSuggestedUsers
 } from '../controllers/authController.js'
-import { getSavedPosts } from '../controllers/postsController.js'
+import { getSavedPosts, getLikedPosts } from '../controllers/postsController.js'
 import { authenticateToken } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -33,6 +33,12 @@ router.get('/suggested', getSuggestedUsers)
  * Get saved posts for the current user (requires authentication)
  */
 router.get('/me/saved', authenticateToken, getSavedPosts)
+
+/**
+ * GET /api/users/me/liked
+ * Get liked posts for the current user (requires authentication)
+ */
+router.get('/me/liked', authenticateToken, getLikedPosts)
 
 /**
  * GET /api/users/:userId

@@ -1362,3 +1362,104 @@ export const getSavedPosts = async (req, res) => {
     })
   }
 }
+
+/**
+ * Get liked posts for the current user
+ * GET /api/users/me/liked?limit=20&cursor=timestamp
+ */
+export const getLikedPosts = async (req, res) => {
+  try {
+    const userId = req.user.id
+    const { limit = 20, cursor } = req.query
+
+    console.log(`❤️  Fetching liked posts for user ${userId}`)
+
+    // Build query for liked posts
+    let query = supabase
+      .from('post_likes')
+      .select(`
+        created_at,
+        post:posts (
+          id,
+          user_id,
+          workout_completion_id,
+          workout_name,
+          caption,
+          image_urls,
+          stats,
+          likes_count,
+          comments_count,
+          saves_count,
+          visibility,
+          created_at,
+          updated_at,
+          user:users (
+            id,
+            username,
+            full_name,
+            profile_photo_url
+          )
+        )
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(parseInt(limit))
+
+    // Apply cursor for pagination
+    if (cursor) {
+      query = query.lt('created_at', cursor)
+    }
+
+    const { data: likedPosts, error } = await query
+
+    if (error) {
+      console.error('❌ Get liked posts error:', error)
+      throw error
+    }
+
+    // Extract posts
+    const posts = likedPosts
+      .filter(lp => lp.post !== null) // Filter out likes for deleted posts
+      .map(lp => lp.post)
+
+    // Check which posts user saved
+    const postIds = posts.map(p => p.id)
+    let savedPostIds = []
+
+    if (postIds.length > 0) {
+      const { data: saves } = await supabase
+        .from('post_saves')
+        .select('post_id')
+        .eq('user_id', userId)
+        .in('post_id', postIds)
+
+      savedPostIds = saves ? saves.map(s => s.post_id) : []
+    }
+
+    // Add liked_by_me and saved_by_me flags
+    const postsWithFlags = posts.map(post => ({
+      ...post,
+      liked_by_me: true, // All posts in this response are liked by definition
+      saved_by_me: savedPostIds.includes(post.id)
+    }))
+
+    console.log(`✅ Found ${posts.length} liked posts`)
+
+    res.json({
+      success: true,
+      data: {
+        posts: postsWithFlags,
+        nextCursor: likedPosts.length === parseInt(limit)
+          ? likedPosts[likedPosts.length - 1].created_at
+          : null
+      }
+    })
+  } catch (error) {
+    console.error('❌ Get liked posts error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch liked posts',
+      message: error.message
+    })
+  }
+}
