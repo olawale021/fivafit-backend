@@ -4,21 +4,19 @@
  */
 
 import cron from 'node-cron'
-import { supabase } from '../config/supabase.js'
 import {
   generateAffirmation,
   getUsersForDailyAffirmations,
   getInactiveUsers,
   wasReengagementRecentlySent,
   getUsersWithoutActivePlan,
-  wasNoPlanSentToday,
   markAsSent
 } from './affirmationService.js'
 import { sendPushNotification } from './pushNotificationService.js'
 
 /**
- * Schedule Daily Affirmations (10am, 1:40pm & 10:25pm)
- * Runs three times daily at 10:00 AM, 1:40 PM and 10:25 PM (TEST TIME)
+ * Schedule Daily Affirmations (10am, 1:40pm & 10:40pm)
+ * Runs three times daily at 10:00 AM, 1:40 PM and 10:40 PM (TEST TIME)
  */
 export const scheduleDailyAffirmations = () => {
   // Morning affirmations at 10:00 AM
@@ -33,13 +31,13 @@ export const scheduleDailyAffirmations = () => {
     await sendDailyAffirmations('afternoon');
   });
 
-  // Evening affirmations at 10:25 PM (22:25) - TEST TIME
-  cron.schedule('25 22 * * *', async () => {
-    console.log('🌙 [Cron] Sending evening affirmations (10:25pm)...');
+  // Evening affirmations at 10:40 PM (22:40) - TEST TIME
+  cron.schedule('40 22 * * *', async () => {
+    console.log('🌙 [Cron] Sending evening affirmations (10:40pm)...');
     await sendDailyAffirmations('evening');
   });
 
-  console.log('✅ Daily affirmation cron jobs scheduled (10am, 1:40pm & 10:25pm)');
+  console.log('✅ Daily affirmation cron jobs scheduled (10am, 1:40pm & 10:40pm)');
 };
 
 /**
@@ -48,25 +46,12 @@ export const scheduleDailyAffirmations = () => {
 async function sendDailyAffirmations(slot) {
   try {
     const users = await getUsersForDailyAffirmations();
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const affirmationsSent = [];
 
     console.log(`📋 Found ${users.length} users with affirmations enabled`);
 
     for (const user of users) {
       try {
-        // Check if already sent today for this slot (skip check for afternoon)
-        const alreadySent = slot === 'afternoon'
-          ? false // Always send afternoon affirmations
-          : slot === 'morning'
-          ? user.last_morning_sent === today
-          : user.last_evening_sent === today;
-
-        if (alreadySent) {
-          console.log(`⏭️  ${slot} affirmation already sent to user ${user.user_id}`);
-          continue;
-        }
-
         // Generate affirmation
         const affirmation = await generateAffirmation(user.user_id, 'daily');
 
@@ -83,20 +68,6 @@ async function sendDailyAffirmations(slot) {
 
         // Mark as sent
         await markAsSent([affirmation.id]);
-
-        // Update last sent date (don't update for afternoon since we always send it)
-        if (slot === 'morning') {
-          await supabase
-            .from('affirmation_schedule')
-            .update({ last_morning_sent: today })
-            .eq('user_id', user.user_id);
-        } else if (slot === 'evening') {
-          await supabase
-            .from('affirmation_schedule')
-            .update({ last_evening_sent: today })
-            .eq('user_id', user.user_id);
-        }
-        // No update for afternoon slot since we always send it
 
         affirmationsSent.push(affirmation.id);
         console.log(`✅ ${slot} affirmation sent to user ${user.user_id}: "${affirmation.affirmation_text.substring(0, 50)}..."`);
@@ -192,11 +163,11 @@ async function sendPushNotificationToUser(userId, notification) {
 
 /**
  * Check for Users Without Workout Plans
- * Runs daily at 10:30 PM to encourage creating workout plans
+ * Runs daily at 10:45 PM to encourage creating workout plans
  */
 export const scheduleNoPlanCheck = () => {
-  // Run daily at 10:30 PM (22:30) - TEST TIME
-  cron.schedule('30 22 * * *', async () => {
+  // Run daily at 10:45 PM (22:45) - TEST TIME
+  cron.schedule('45 22 * * *', async () => {
     console.log('🔍 [Cron] Checking for users without workout plans...');
 
     try {
@@ -208,14 +179,6 @@ export const scheduleNoPlanCheck = () => {
 
       for (const userId of usersWithoutPlan) {
         try {
-          // Check if no-plan notification was already sent today
-          const alreadySent = await wasNoPlanSentToday(userId);
-
-          if (alreadySent) {
-            console.log(`⏭️  No-plan notification already sent today to user ${userId}`);
-            continue;
-          }
-
           // Generate no-plan message
           const affirmation = await generateAffirmation(userId, 'no_plan');
 
@@ -249,7 +212,7 @@ export const scheduleNoPlanCheck = () => {
     }
   });
 
-  console.log('✅ No-plan check cron job scheduled (daily at 10:30pm)');
+  console.log('✅ No-plan check cron job scheduled (daily at 10:45pm)');
 };
 
 /**
