@@ -17,8 +17,8 @@ import {
 import { sendPushNotification } from './pushNotificationService.js'
 
 /**
- * Schedule Daily Affirmations (10am & 9pm)
- * Runs twice daily at 10:00 AM and 9:00 PM
+ * Schedule Daily Affirmations (10am, 12:40pm & 9pm)
+ * Runs three times daily at 10:00 AM, 12:40 PM and 9:00 PM
  */
 export const scheduleDailyAffirmations = () => {
   // Morning affirmations at 10:00 AM
@@ -27,13 +27,19 @@ export const scheduleDailyAffirmations = () => {
     await sendDailyAffirmations('morning');
   });
 
+  // Afternoon affirmations at 12:40 PM
+  cron.schedule('40 12 * * *', async () => {
+    console.log('☀️ [Cron] Sending afternoon affirmations (12:40pm)...');
+    await sendDailyAffirmations('afternoon');
+  });
+
   // Evening affirmations at 9:00 PM (21:00)
   cron.schedule('0 21 * * *', async () => {
     console.log('🌙 [Cron] Sending evening affirmations (9pm)...');
     await sendDailyAffirmations('evening');
   });
 
-  console.log('✅ Daily affirmation cron jobs scheduled (10am & 9pm)');
+  console.log('✅ Daily affirmation cron jobs scheduled (10am, 12:40pm & 9pm)');
 };
 
 /**
