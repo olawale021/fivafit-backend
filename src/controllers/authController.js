@@ -1291,3 +1291,147 @@ export async function deleteAccount(req, res) {
     })
   }
 }
+
+/**
+ * POST /api/auth/forgot-password
+ * Verify email exists for password reset (no email sending)
+ */
+export async function forgotPassword(req, res) {
+  try {
+    const { email } = req.body
+
+    // Validate input
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email required',
+        message: 'Email is required to reset password'
+      })
+    }
+
+    // Check if user exists
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('id, email, username, google_id, apple_id')
+      .eq('email', email)
+      .single()
+
+    if (userError || !userData) {
+      // Don't reveal if email exists or not for security
+      return res.json({
+        success: true,
+        message: 'If an account with that email exists, you can proceed to reset your password'
+      })
+    }
+
+    // Check if account was created with OAuth
+    if (userData.google_id || userData.apple_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'OAuth account',
+        message: 'This account was created with Google or Apple. Please sign in with your OAuth provider.'
+      })
+    }
+
+    // Email exists and is not OAuth - allow password reset
+    res.json({
+      success: true,
+      message: 'Email verified. You can now reset your password.',
+      data: {
+        canReset: true
+      }
+    })
+
+    console.log(`✅ Password reset verified for: ${email}`)
+  } catch (error) {
+    console.error('❌ Forgot password error:', error)
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to verify email',
+      message: 'Internal server error while verifying email'
+    })
+  }
+}
+
+/**
+ * POST /api/auth/reset-password
+ * Reset password directly (no token required, just email verification)
+ */
+export async function resetPassword(req, res) {
+  try {
+    const { email, newPassword } = req.body
+
+    // Validate input
+    if (!email || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing data',
+        message: 'Email and new password are required'
+      })
+    }
+
+    // Validate password strength
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Weak password',
+        message: 'Password must be at least 8 characters long'
+      })
+    }
+
+    // Find user by email
+    const { data: userData, error: findError } = await supabase
+      .from('users')
+      .select('id, email, google_id, apple_id')
+      .eq('email', email)
+      .single()
+
+    if (findError || !userData) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found',
+        message: 'No user found with this email'
+      })
+    }
+
+    // Check if user is OAuth user
+    if (userData.google_id || userData.apple_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'OAuth account',
+        message: 'This account was created with OAuth. Please sign in with Google or Apple.'
+      })
+    }
+
+    // Hash the new password
+    const bcrypt = await import('bcryptjs')
+    const saltRounds = 12
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds)
+
+    // Update password_hash in users table only
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password_hash: hashedPassword })
+      .eq('id', userData.id)
+
+    if (updateError) {
+      throw updateError
+    }
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully'
+    })
+
+    console.log(`✅ Password reset for user: ${userData.email}`)
+  } catch (error) {
+    console.error('❌ Reset password error:', error)
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to reset password',
+      message: 'Internal server error while resetting password'
+    })
+  }
+}

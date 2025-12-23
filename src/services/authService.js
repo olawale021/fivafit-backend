@@ -137,6 +137,7 @@ export function validateProfileUpdateData(updates) {
 
   if (updates.body_focus) {
     const validBodyParts = ['chest', 'back', 'shoulders', 'arms', 'abs', 'legs', 'glutes', 'cardio']
+    const allBodyPartsCount = validBodyParts.length
 
     // Ensure it's an array
     if (!Array.isArray(updates.body_focus)) {
@@ -145,11 +146,11 @@ export function validateProfileUpdateData(updates) {
         message: 'Body focus must be an array'
       })
     } else {
-      // Validate max 3 body parts
-      if (updates.body_focus.length > 3) {
+      // Validate max 4 body parts (unless selecting all body parts)
+      if (updates.body_focus.length > 4 && updates.body_focus.length !== allBodyPartsCount) {
         errors.push({
           field: 'body_focus',
-          message: 'Maximum 3 body focus areas allowed'
+          message: 'Maximum 4 body focus areas allowed (or select all)'
         })
       }
 

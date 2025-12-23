@@ -5,6 +5,7 @@ import session from 'express-session'
 import passport from 'passport'
 import { supabase } from './config/supabase.js'
 import { startCronJobs, stopCronJobs } from './services/cronService.js'
+import { startAffirmationCronJobs } from './services/affirmationCronService.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import scanHistoryRoutes from './routes/scanHistory.js'
@@ -17,6 +18,8 @@ import challengesRoutes from './routes/challenges.js'
 import groupsRoutes from './routes/groups.js'
 import savedWorkoutsRoutes from './routes/savedWorkouts.js'
 import progressRoutes from './routes/progress.js'
+import userActivityRoutes from './routes/userActivity.js'
+import affirmationsRoutes from './routes/affirmations.js'
 
 // Load environment variables
 dotenv.config()
@@ -127,6 +130,8 @@ app.use('/api/challenges', challengesRoutes)
 app.use('/api/groups', groupsRoutes)
 app.use('/api/saved-workouts', savedWorkoutsRoutes)
 app.use('/api/progress', progressRoutes)
+app.use('/api/user-activity', userActivityRoutes)
+app.use('/api/affirmations', affirmationsRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -192,6 +197,9 @@ app.listen(PORT, () => {
     // Using 'all' to enable Phase 1 & Phase 2 cron jobs
     // Phase 3 cron jobs are placeholders and will log warnings
     startCronJobs('all')
+
+    // Start affirmation cron jobs (daily 10am & 9pm, re-engagement every 6 hours)
+    startAffirmationCronJobs()
   } else {
     console.log('⏸️  Cron jobs disabled in development mode')
     console.log('   Set ENABLE_CRON_JOBS=true in .env to enable them')

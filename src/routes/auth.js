@@ -19,7 +19,9 @@ import {
   refreshToken,
   checkUsername,
   changePassword,
-  deleteAccount
+  deleteAccount,
+  forgotPassword,
+  resetPassword
 } from '../controllers/authController.js'
 
 // Configure multer for memory storage
@@ -161,5 +163,17 @@ router.put('/change-password', authenticateJWT, changePassword)
  * Delete user account permanently (requires authentication)
  */
 router.delete('/delete-account', authenticateJWT, deleteAccount)
+
+/**
+ * POST /api/auth/forgot-password
+ * Send password reset email
+ */
+router.post('/forgot-password', forgotPassword)
+
+/**
+ * POST /api/auth/reset-password
+ * Reset password with token
+ */
+router.post('/reset-password', resetPassword)
 
 export default router

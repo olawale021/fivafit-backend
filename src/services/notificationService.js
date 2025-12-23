@@ -357,7 +357,8 @@ export const createWorkoutReminderNotification = async (userId, workoutData, rem
           workout_id: workoutData.id,
           workout_name: workoutData.workout_name,
           scheduled_date: workoutData.scheduled_date,
-          estimated_duration: workoutData.estimated_duration_minutes || 45
+          estimated_duration: workoutData.estimated_duration_minutes || 45,
+          plan_id: workoutData.plan_id || workoutData.workout_plan_id
         }
       })
       .select()
@@ -372,6 +373,7 @@ export const createWorkoutReminderNotification = async (userId, workoutData, rem
       data: {
         type: types[reminderType],
         workoutId: workoutData.id,
+        planId: workoutData.plan_id || workoutData.workout_plan_id,
         screen: 'workout-detail',
         notificationId: notification.id
       },
