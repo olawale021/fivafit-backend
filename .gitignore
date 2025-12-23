@@ -104,3 +104,4 @@ migrations/database_schema.sql
 migrations/database_workout_planner.sql
 migrations/database_workouts.sql
 migrations/profile_photos_storage_policy.sql
+migrations/add_no_plan_affirmation_type.sql
