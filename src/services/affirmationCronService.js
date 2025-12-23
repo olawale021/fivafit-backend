@@ -17,8 +17,8 @@ import {
 import { sendPushNotification } from './pushNotificationService.js'
 
 /**
- * Schedule Daily Affirmations (10am, 1:05pm & 9pm)
- * Runs three times daily at 10:00 AM, 1:05 PM and 9:00 PM
+ * Schedule Daily Affirmations (10am, 1:40pm & 9pm)
+ * Runs three times daily at 10:00 AM, 1:40 PM and 9:00 PM
  */
 export const scheduleDailyAffirmations = () => {
   // Morning affirmations at 10:00 AM
@@ -27,9 +27,9 @@ export const scheduleDailyAffirmations = () => {
     await sendDailyAffirmations('morning');
   });
 
-  // Afternoon affirmations at 1:05 PM
-  cron.schedule('5 13 * * *', async () => {
-    console.log('☀️ [Cron] Sending afternoon affirmations (1:05pm)...');
+  // Afternoon affirmations at 1:40 PM
+  cron.schedule('40 13 * * *', async () => {
+    console.log('☀️ [Cron] Sending afternoon affirmations (1:40pm)...');
     await sendDailyAffirmations('afternoon');
   });
 
@@ -39,7 +39,7 @@ export const scheduleDailyAffirmations = () => {
     await sendDailyAffirmations('evening');
   });
 
-  console.log('✅ Daily affirmation cron jobs scheduled (10am, 1:05pm & 9pm)');
+  console.log('✅ Daily affirmation cron jobs scheduled (10am, 1:40pm & 9pm)');
 };
 
 /**
@@ -177,23 +177,8 @@ export const scheduleReengagementCheck = () => {
  */
 async function sendPushNotificationToUser(userId, notification) {
   try {
-    // Get user's push token from database
-    const { data, error } = await supabase
-      .from('users')
-      .select('push_token')
-      .eq('id', userId)
-      .not('push_token', 'is', null)
-      .single();
-
-    if (error || !data) {
-      console.log(`⚠️  No push token found for user ${userId}`);
-      return;
-    }
-
-    const pushToken = data.push_token;
-
-    // Send using push notification service
-    await sendPushNotification(pushToken, notification);
+    // Send using push notification service (it will fetch push token internally)
+    await sendPushNotification(userId, notification);
 
   } catch (error) {
     console.error(`Error sending push notification to user ${userId}:`, error);
