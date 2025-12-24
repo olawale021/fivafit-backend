@@ -15,29 +15,29 @@ import {
 import { sendPushNotification } from './pushNotificationService.js'
 
 /**
- * Schedule Daily Affirmations (10am, 1:40pm & 10:40pm)
- * Runs three times daily at 10:00 AM, 1:40 PM and 10:40 PM (TEST TIME)
+ * Schedule Daily Affirmations (8am, 2pm & 8pm)
+ * Runs three times daily at 8:00 AM, 2:00 PM and 8:00 PM
  */
 export const scheduleDailyAffirmations = () => {
-  // Morning affirmations at 10:00 AM
-  cron.schedule('0 10 * * *', async () => {
-    console.log('🌅 [Cron] Sending morning affirmations (10am)...');
+  // Morning affirmations at 8:00 AM
+  cron.schedule('0 8 * * *', async () => {
+    console.log('🌅 [Cron] Sending morning affirmations (8am)...');
     await sendDailyAffirmations('morning');
   });
 
-  // Afternoon affirmations at 1:40 PM
-  cron.schedule('40 13 * * *', async () => {
-    console.log('☀️ [Cron] Sending afternoon affirmations (1:40pm)...');
+  // Afternoon affirmations at 2:00 PM
+  cron.schedule('0 14 * * *', async () => {
+    console.log('☀️ [Cron] Sending afternoon affirmations (2pm)...');
     await sendDailyAffirmations('afternoon');
   });
 
-  // Evening affirmations at 10:40 PM (22:40) - TEST TIME
-  cron.schedule('40 22 * * *', async () => {
-    console.log('🌙 [Cron] Sending evening affirmations (10:40pm)...');
+  // Evening affirmations at 8:00 PM (20:00)
+  cron.schedule('0 20 * * *', async () => {
+    console.log('🌙 [Cron] Sending evening affirmations (8pm)...');
     await sendDailyAffirmations('evening');
   });
 
-  console.log('✅ Daily affirmation cron jobs scheduled (10am, 1:40pm & 10:40pm)');
+  console.log('✅ Daily affirmation cron jobs scheduled (8am, 2pm & 8pm)');
 };
 
 /**
@@ -163,11 +163,11 @@ async function sendPushNotificationToUser(userId, notification) {
 
 /**
  * Check for Users Without Workout Plans
- * Runs daily at 10:45 PM to encourage creating workout plans
+ * Runs daily at 3:00 PM to encourage creating workout plans
  */
 export const scheduleNoPlanCheck = () => {
-  // Run daily at 10:45 PM (22:45) - TEST TIME
-  cron.schedule('45 22 * * *', async () => {
+  // Run daily at 3:00 PM (15:00)
+  cron.schedule('0 15 * * *', async () => {
     console.log('🔍 [Cron] Checking for users without workout plans...');
 
     try {
@@ -212,7 +212,7 @@ export const scheduleNoPlanCheck = () => {
     }
   });
 
-  console.log('✅ No-plan check cron job scheduled (daily at 10:45pm)');
+  console.log('✅ No-plan check cron job scheduled (daily at 3pm)');
 };
 
 /**
