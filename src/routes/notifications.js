@@ -6,6 +6,7 @@ import {
   markAsRead,
   markAllAsRead,
   registerPushToken,
+  unregisterPushToken,
   getPreferences,
   updatePreferences,
   sendTestPushNotification
@@ -42,6 +43,12 @@ router.put('/:notificationId/read', authenticateToken, markAsRead)
  * Register or update user's push notification token
  */
 router.post('/register-push-token', authenticateToken, registerPushToken)
+
+/**
+ * POST /api/notifications/unregister-push-token
+ * Remove user's push notification token (for logout)
+ */
+router.post('/unregister-push-token', authenticateToken, unregisterPushToken)
 
 /**
  * GET /api/notifications/preferences

@@ -5,96 +5,130 @@ import { supabase } from '../config/supabase.js';
 const expo = new Expo();
 
 /**
- * Send push notification to a user
+ * Send push notification to a user (supports multiple devices)
  * @param {string} userId - User ID
  * @param {Object} notificationData - Notification payload
  * @param {string} notificationData.title - Notification title
  * @param {string} notificationData.body - Notification body
  * @param {Object} [notificationData.data] - Additional data to include
  * @param {string} [notificationData.channelId] - Android notification channel (default: 'workout-notifications')
- * @returns {Promise<Object|null>} Push ticket or null if failed
+ * @returns {Promise<Array>} Array of push tickets
  */
 export const sendPushNotification = async (userId, notificationData) => {
   try {
-    // Get user's push token and preferences
+    // Check if push notifications are enabled for user
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('push_token, push_notifications_enabled')
+      .select('push_notifications_enabled')
       .eq('id', userId)
       .single();
 
     if (userError) {
       console.error(`❌ Error fetching user ${userId}:`, userError);
-      return null;
+      return [];
     }
 
-    if (!user?.push_token) {
-      console.log(`⏭️  No push token for user ${userId}`);
-      return null;
-    }
-
-    if (!user.push_notifications_enabled) {
+    if (!user?.push_notifications_enabled) {
       console.log(`⏭️  Push notifications disabled for user ${userId}`);
-      return null;
-    }
-
-    // Validate Expo push token format
-    if (!Expo.isExpoPushToken(user.push_token)) {
-      console.error(`❌ Invalid Expo push token for user ${userId}: ${user.push_token}`);
-      // Remove invalid token
-      await supabase
-        .from('users')
-        .update({ push_token: null })
-        .eq('id', userId);
-      return null;
+      return [];
     }
 
     // Check quiet hours (if enabled)
     const inQuietHours = await checkQuietHours(userId);
     if (inQuietHours) {
       console.log(`🔕 User ${userId} is in quiet hours - skipping push notification`);
-      return null;
+      return [];
     }
 
-    // Prepare push message
-    const message = {
-      to: user.push_token,
-      sound: 'default',
-      title: notificationData.title,
-      body: notificationData.body,
-      data: notificationData.data || {},
-      badge: 1,
-      priority: 'high',
-      channelId: notificationData.channelId || 'default', // Android notification channel
-    };
+    // Get all active push tokens for this user (multiple devices)
+    const { data: pushTokens, error: tokensError } = await supabase
+      .from('push_tokens')
+      .select('id, token, platform, device_name')
+      .eq('user_id', userId)
+      .eq('is_active', true);
 
-    console.log(`📤 Sending push notification to user ${userId}: ${notificationData.title}`);
+    if (tokensError) {
+      console.error(`❌ Error fetching push tokens for user ${userId}:`, tokensError);
+      return [];
+    }
 
-    // Send push notification
-    const tickets = await expo.sendPushNotificationsAsync([message]);
-    const ticket = tickets[0];
+    if (!pushTokens || pushTokens.length === 0) {
+      console.log(`⏭️  No active push tokens for user ${userId}`);
+      return [];
+    }
 
-    console.log(`✅ Push notification sent:`, ticket);
+    console.log(`📤 Sending push notification to user ${userId} on ${pushTokens.length} device(s): ${notificationData.title}`);
 
-    // Check for errors in ticket
-    if (ticket.status === 'error') {
-      console.error(`❌ Error in push ticket:`, ticket.message);
+    // Prepare messages for all devices
+    const messages = [];
+    const tokenIds = [];
 
-      // If token is invalid, remove it
-      if (ticket.details?.error === 'DeviceNotRegistered') {
-        console.log(`🗑️  Removing invalid token for user ${userId}`);
+    for (const tokenData of pushTokens) {
+      // Validate Expo push token format
+      if (!Expo.isExpoPushToken(tokenData.token)) {
+        console.error(`❌ Invalid Expo push token: ${tokenData.token}`);
+        // Mark as inactive
         await supabase
-          .from('users')
-          .update({ push_token: null })
-          .eq('id', userId);
+          .from('push_tokens')
+          .update({ is_active: false })
+          .eq('id', tokenData.id);
+        continue;
+      }
+
+      messages.push({
+        to: tokenData.token,
+        sound: 'default',
+        title: notificationData.title,
+        body: notificationData.body,
+        data: notificationData.data || {},
+        badge: 1,
+        priority: 'high',
+        channelId: notificationData.channelId || 'default',
+      });
+
+      tokenIds.push(tokenData.id);
+    }
+
+    if (messages.length === 0) {
+      console.log(`⏭️  No valid push tokens for user ${userId}`);
+      return [];
+    }
+
+    // Send push notifications
+    const tickets = await expo.sendPushNotificationsAsync(messages);
+
+    console.log(`✅ Push notifications sent to ${tickets.length} device(s)`);
+
+    // Update last_used_at for successfully sent tokens and handle errors
+    for (let i = 0; i < tickets.length; i++) {
+      const ticket = tickets[i];
+      const tokenId = tokenIds[i];
+
+      if (ticket.status === 'ok') {
+        // Update last_used_at
+        await supabase
+          .from('push_tokens')
+          .update({ last_used_at: new Date().toISOString() })
+          .eq('id', tokenId);
+      } else if (ticket.status === 'error') {
+        console.error(`❌ Error in push ticket:`, ticket.message);
+
+        // If token is invalid, mark as inactive
+        if (ticket.details?.error === 'DeviceNotRegistered') {
+          console.log(`🗑️  Marking token as inactive: ${tokenId}`);
+          await supabase
+            .from('push_tokens')
+            .update({ is_active: false })
+            .eq('id', tokenId);
+        }
       }
     }
 
-    return ticket;
+    return tickets;
 
   } catch (error) {
     console.error('❌ Error sending push notification:', error);
-    return null;
+    return [];
   }
 };
 
@@ -169,12 +203,16 @@ export const sendBatchPushNotifications = async (notifications) => {
 };
 
 /**
- * Update user's push token
+ * Update user's push token (add new device or update existing)
  * @param {string} userId - User ID
  * @param {string} pushToken - Expo push token
+ * @param {Object} deviceInfo - Optional device information
+ * @param {string} deviceInfo.platform - 'ios', 'android', 'web'
+ * @param {string} deviceInfo.deviceName - Device name/model
+ * @param {string} deviceInfo.deviceId - Unique device identifier
  * @returns {Promise<boolean>} Success status
  */
-export const updatePushToken = async (userId, pushToken) => {
+export const updatePushToken = async (userId, pushToken, deviceInfo = {}) => {
   try {
     // Validate token format
     if (!Expo.isExpoPushToken(pushToken)) {
@@ -182,20 +220,81 @@ export const updatePushToken = async (userId, pushToken) => {
       return false;
     }
 
-    const { error } = await supabase
-      .from('users')
-      .update({
-        push_token: pushToken,
-        push_token_updated_at: new Date().toISOString()
-      })
-      .eq('id', userId);
+    // IMPORTANT: Remove this token from any OTHER users first
+    // This prevents duplicate notifications when switching accounts on the same device
+    const { data: existingTokens, error: checkError } = await supabase
+      .from('push_tokens')
+      .select('id, user_id')
+      .eq('token', pushToken)
+      .neq('user_id', userId);
 
-    if (error) {
-      console.error(`❌ Error updating push token for user ${userId}:`, error);
-      return false;
+    if (checkError) {
+      console.error(`❌ Error checking existing push tokens:`, checkError);
+    } else if (existingTokens && existingTokens.length > 0) {
+      console.log(`🔄 Removing push token from ${existingTokens.length} other user(s)`);
+
+      // Delete tokens from other users
+      const tokenIds = existingTokens.map(t => t.id);
+      const { error: removeError } = await supabase
+        .from('push_tokens')
+        .delete()
+        .in('id', tokenIds);
+
+      if (removeError) {
+        console.error(`❌ Error removing push token from other users:`, removeError);
+      } else {
+        console.log(`✅ Push token removed from other users`);
+      }
     }
 
-    console.log(`✅ Push token updated for user ${userId}`);
+    // Check if this token already exists for this user
+    const { data: existingToken } = await supabase
+      .from('push_tokens')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('token', pushToken)
+      .single();
+
+    if (existingToken) {
+      // Token already exists - just mark it as active and update device info
+      const { error: updateError } = await supabase
+        .from('push_tokens')
+        .update({
+          is_active: true,
+          platform: deviceInfo.platform || null,
+          device_name: deviceInfo.deviceName || null,
+          device_id: deviceInfo.deviceId || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', existingToken.id);
+
+      if (updateError) {
+        console.error(`❌ Error updating existing push token:`, updateError);
+        return false;
+      }
+
+      console.log(`✅ Push token reactivated for user ${userId}`);
+    } else {
+      // Insert new token
+      const { error: insertError } = await supabase
+        .from('push_tokens')
+        .insert({
+          user_id: userId,
+          token: pushToken,
+          platform: deviceInfo.platform || null,
+          device_name: deviceInfo.deviceName || null,
+          device_id: deviceInfo.deviceId || null,
+          is_active: true
+        });
+
+      if (insertError) {
+        console.error(`❌ Error inserting push token:`, insertError);
+        return false;
+      }
+
+      console.log(`✅ New push token added for user ${userId}`);
+    }
+
     return true;
 
   } catch (error) {
@@ -205,26 +304,36 @@ export const updatePushToken = async (userId, pushToken) => {
 };
 
 /**
- * Remove user's push token
+ * Remove user's push token (specific token or all tokens)
  * @param {string} userId - User ID
+ * @param {string} [pushToken] - Optional: specific token to remove. If not provided, removes all tokens.
  * @returns {Promise<boolean>} Success status
  */
-export const removePushToken = async (userId) => {
+export const removePushToken = async (userId, pushToken = null) => {
   try {
-    const { error } = await supabase
-      .from('users')
-      .update({
-        push_token: null,
-        push_token_updated_at: new Date().toISOString()
-      })
-      .eq('id', userId);
+    let query = supabase
+      .from('push_tokens')
+      .delete()
+      .eq('user_id', userId);
+
+    // If specific token provided, only remove that one
+    if (pushToken) {
+      query = query.eq('token', pushToken);
+    }
+
+    const { error } = await query;
 
     if (error) {
       console.error(`❌ Error removing push token for user ${userId}:`, error);
       return false;
     }
 
-    console.log(`✅ Push token removed for user ${userId}`);
+    if (pushToken) {
+      console.log(`✅ Specific push token removed for user ${userId}`);
+    } else {
+      console.log(`✅ All push tokens removed for user ${userId}`);
+    }
+
     return true;
 
   } catch (error) {

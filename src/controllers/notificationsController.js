@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js'
 import {
   updatePushToken,
+  removePushToken,
   getNotificationPreferences,
   updateNotificationPreferences,
   sendPushNotification
@@ -250,7 +251,7 @@ export const markAllAsRead = async (req, res) => {
  */
 export const registerPushToken = async (req, res) => {
   try {
-    const { pushToken } = req.body
+    const { pushToken, deviceInfo } = req.body
     const userId = req.user.id
 
     if (!pushToken) {
@@ -262,7 +263,7 @@ export const registerPushToken = async (req, res) => {
 
     console.log(`📱 Registering push token for user ${userId}`)
 
-    const success = await updatePushToken(userId, pushToken)
+    const success = await updatePushToken(userId, pushToken, deviceInfo || {})
 
     if (!success) {
       return res.status(500).json({
@@ -280,6 +281,47 @@ export const registerPushToken = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to register push token',
+      message: error.message
+    })
+  }
+}
+
+/**
+ * Unregister user's push notification token (for logout)
+ * POST /api/notifications/unregister-push-token
+ */
+export const unregisterPushToken = async (req, res) => {
+  try {
+    const { pushToken } = req.body
+    const userId = req.user.id
+
+    if (!pushToken) {
+      return res.status(400).json({
+        success: false,
+        error: 'Push token is required'
+      })
+    }
+
+    console.log(`🚪 Unregistering push token for user ${userId}`)
+
+    const success = await removePushToken(userId, pushToken)
+
+    if (!success) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to unregister push token'
+      })
+    }
+
+    res.json({
+      success: true,
+      message: 'Push token unregistered successfully'
+    })
+  } catch (error) {
+    console.error('❌ Unregister push token error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to unregister push token',
       message: error.message
     })
   }
