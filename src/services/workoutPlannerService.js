@@ -832,6 +832,20 @@ function buildPlanWithExerciseData(aiPlan, fullExercises) {
  */
 async function savePlanToDatabase(userId, completePlan, preferences) {
   try {
+    // Calculate actual days_per_week (capped at 7 for database constraint)
+    let daysPerWeek = preferences.days_per_week;
+    if (preferences.selected_dates && preferences.selected_dates.length > 0) {
+      const totalDates = preferences.selected_dates.length;
+      const sortedDates = [...preferences.selected_dates].sort();
+      const firstDate = new Date(sortedDates[0]);
+      const lastDate = new Date(sortedDates[totalDates - 1]);
+      const totalDays = Math.ceil((lastDate - firstDate) / (1000 * 60 * 60 * 24)) + 1;
+      const totalWeeks = Math.max(1, Math.ceil(totalDays / 7));
+      daysPerWeek = Math.min(7, Math.ceil(totalDates / totalWeeks));
+    } else {
+      daysPerWeek = Math.min(7, daysPerWeek);
+    }
+
     // Create workout plan record
     const { data: plan, error: planError} = await supabase
       .from('workout_plans')
@@ -841,7 +855,7 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
         description: completePlan.description,
         fitness_goals: preferences.fitness_goals,
         target_body_parts: preferences.target_body_parts,
-        days_per_week: preferences.days_per_week,
+        days_per_week: daysPerWeek,
         hours_per_session: preferences.hours_per_session,
         selected_days: preferences.selected_days, // Keep for backward compatibility
         selected_dates: preferences.selected_dates, // New: actual calendar dates
@@ -860,6 +874,13 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
     console.log(`✅ Created workout_plans record: ${plan.id}`);
     console.log(`📅 Start date: ${plan.start_date}, Selected dates: ${preferences.selected_dates?.length || 0}`);
 
+    // Get the start date for week calculations
+    const startDate = preferences.start_date
+      ? new Date(preferences.start_date + 'T00:00:00')
+      : (preferences.selected_dates && preferences.selected_dates.length > 0
+        ? new Date(preferences.selected_dates.sort()[0] + 'T00:00:00')
+        : new Date());
+
     // Create daily workouts with scheduled dates mapped from selected_dates
     const dailyWorkoutsToInsert = completePlan.daily_workouts.map((day, index) => {
       // Map each workout to its corresponding selected date
@@ -875,10 +896,19 @@ async function savePlanToDatabase(userId, completePlan, preferences) {
         dayOfWeek = dayNames[date.getDay()];
       }
 
+      // Calculate week number based on scheduled date relative to start date
+      let weekNumber = day.week_number || 1;
+      if (scheduledDate) {
+        const workoutDate = new Date(scheduledDate + 'T00:00:00');
+        const daysDiff = Math.floor((workoutDate - startDate) / (1000 * 60 * 60 * 24));
+        weekNumber = Math.floor(daysDiff / 7) + 1;
+        console.log(`📅 Workout ${index + 1}: ${scheduledDate} | Days from start: ${daysDiff} | Week: ${weekNumber}`);
+      }
+
       return {
         workout_plan_id: plan.id,
         day_of_week: dayOfWeek,
-        week_number: day.week_number || 1,
+        week_number: weekNumber,
         day_order: day.day_order || (index + 1),
         workout_name: day.workout_name,
         focus_area: day.focus_area,
