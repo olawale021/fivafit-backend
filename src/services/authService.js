@@ -495,26 +495,48 @@ export async function deleteUserAccount(userId, reason) {
     // Don't fail deletion if we can't save the reason
   }
 
-  // Delete content reports where user is reporter or reported
-  const { error: reportsError } = await supabase
+  // Delete content reports where user is the reporter
+  const { error: reporterError } = await supabase
     .from('content_reports')
     .delete()
-    .or(`reporter_id.eq.${userId},reported_user_id.eq.${userId}`)
+    .eq('reporter_id', userId)
 
-  if (reportsError) {
-    console.error('❌ Error deleting content reports:', reportsError)
-    // Continue with deletion anyway
+  if (reporterError) {
+    console.error('❌ Error deleting reports by user:', reporterError)
+  } else {
+    console.log('✅ Deleted reports where user is reporter')
   }
 
-  // Delete user blocks (where user blocked someone or was blocked)
-  const { error: blocksError } = await supabase
+  // Delete content reports where user is the reported user
+  const { error: reportedError } = await supabase
+    .from('content_reports')
+    .delete()
+    .eq('reported_user_id', userId)
+
+  if (reportedError) {
+    console.error('❌ Error deleting reports against user:', reportedError)
+  } else {
+    console.log('✅ Deleted reports where user is reported')
+  }
+
+  // Delete user blocks where user is the blocker
+  const { error: blockerError } = await supabase
     .from('user_blocks')
     .delete()
-    .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`)
+    .eq('blocker_id', userId)
 
-  if (blocksError) {
-    console.error('❌ Error deleting user blocks:', blocksError)
-    // Continue with deletion anyway
+  if (blockerError) {
+    console.error('❌ Error deleting blocks by user:', blockerError)
+  }
+
+  // Delete user blocks where user is blocked
+  const { error: blockedError } = await supabase
+    .from('user_blocks')
+    .delete()
+    .eq('blocked_id', userId)
+
+  if (blockedError) {
+    console.error('❌ Error deleting blocks against user:', blockedError)
   }
 
   // Delete user from database
