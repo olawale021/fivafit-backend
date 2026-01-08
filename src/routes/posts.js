@@ -1,6 +1,7 @@
 import express from 'express'
 import multer from 'multer'
 import { authenticateToken, optionalAuth } from '../middleware/auth.js'
+import { filterPostContent, filterCommentContent } from '../middleware/contentFilter.js'
 import {
   uploadImage,
   uploadImages,
@@ -44,8 +45,8 @@ router.post('/upload-image', authenticateToken, upload.single('image'), uploadIm
 // Multiple images upload endpoint (requires auth) - max 5 images
 router.post('/upload-images', authenticateToken, upload.array('images', 5), uploadImages)
 
-// Create post (requires auth)
-router.post('/', authenticateToken, createPost)
+// Create post (requires auth, with content filtering)
+router.post('/', authenticateToken, filterPostContent, createPost)
 
 // Get feed (optional auth - shows liked status if authenticated)
 router.get('/feed', optionalAuth, getFeed)
@@ -71,8 +72,8 @@ router.delete('/:postId', authenticateToken, deletePost)
 // Get comments for a post
 router.get('/:postId/comments', getComments)
 
-// Add comment to a post (requires auth)
-router.post('/:postId/comments', authenticateToken, addComment)
+// Add comment to a post (requires auth, with content filtering)
+router.post('/:postId/comments', authenticateToken, filterCommentContent, addComment)
 
 // Delete a comment (requires auth)
 router.delete('/comments/:commentId', authenticateToken, deleteComment)

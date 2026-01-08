@@ -11,6 +11,12 @@ import {
   getSuggestedUsers
 } from '../controllers/authController.js'
 import { getSavedPosts, getLikedPosts } from '../controllers/postsController.js'
+import {
+  blockUserHandler,
+  unblockUserHandler,
+  getBlockStatusHandler,
+  getBlockedUsersHandler
+} from '../controllers/blockController.js'
 import { authenticateToken } from '../middleware/auth.js'
 
 const router = express.Router()
@@ -39,6 +45,12 @@ router.get('/me/saved', authenticateToken, getSavedPosts)
  * Get liked posts for the current user (requires authentication)
  */
 router.get('/me/liked', authenticateToken, getLikedPosts)
+
+/**
+ * GET /api/users/me/blocked
+ * Get list of blocked users (requires authentication)
+ */
+router.get('/me/blocked', authenticateToken, getBlockedUsersHandler)
 
 /**
  * GET /api/users/:userId
@@ -81,5 +93,23 @@ router.get('/:userId/following', getUserFollowing)
  * Check if current user is following this user (requires authentication)
  */
 router.get('/:userId/follow-status', authenticateToken, getFollowStatus)
+
+/**
+ * POST /api/users/:userId/block
+ * Block a user (requires authentication)
+ */
+router.post('/:userId/block', authenticateToken, blockUserHandler)
+
+/**
+ * DELETE /api/users/:userId/block
+ * Unblock a user (requires authentication)
+ */
+router.delete('/:userId/block', authenticateToken, unblockUserHandler)
+
+/**
+ * GET /api/users/:userId/block-status
+ * Check block status with a user (requires authentication)
+ */
+router.get('/:userId/block-status', authenticateToken, getBlockStatusHandler)
 
 export default router

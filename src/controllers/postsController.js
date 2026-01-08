@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js'
 import sharp from 'sharp'
 import { createLikeNotification, createCommentNotification, createReplyNotification, deleteNotification } from '../services/notificationService.js'
+import { getExcludedUserIds } from '../services/blockService.js'
 
 /**
  * Upload post image to Supabase Storage (single image - backward compatibility)
@@ -283,7 +284,13 @@ export const getFeed = async (req, res) => {
 
     console.log(`📱 Fetching feed: page ${page}, limit ${limit}`)
 
-    const { data, error } = await supabase
+    // Get blocked user IDs to exclude from feed
+    let excludedUserIds = []
+    if (userId) {
+      excludedUserIds = await getExcludedUserIds(userId)
+    }
+
+    let query = supabase
       .from('posts')
       .select(`
         *,
@@ -295,6 +302,13 @@ export const getFeed = async (req, res) => {
         )
       `)
       .eq('visibility', 'public')
+
+    // Filter out posts from blocked users
+    if (excludedUserIds.length > 0) {
+      query = query.not('user_id', 'in', `(${excludedUserIds.join(',')})`)
+    }
+
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .range(page * limit, (page + 1) * limit - 1)
 
@@ -361,6 +375,9 @@ export const getFollowingFeed = async (req, res) => {
 
     console.log(`📱 Fetching following feed for user ${userId}: page ${page}, limit ${limit}`)
 
+    // Get blocked user IDs to exclude (safety measure)
+    const excludedUserIds = await getExcludedUserIds(userId)
+
     // First, get list of users that current user follows
     const { data: follows, error: followsError } = await supabase
       .from('user_follows')
@@ -372,9 +389,12 @@ export const getFollowingFeed = async (req, res) => {
       throw followsError
     }
 
-    const followingIds = follows.map(f => f.following_id)
+    // Filter out blocked users from following list
+    const followingIds = follows
+      .map(f => f.following_id)
+      .filter(id => !excludedUserIds.includes(id))
 
-    // If not following anyone, return empty feed
+    // If not following anyone (or all are blocked), return empty feed
     if (followingIds.length === 0) {
       return res.json({
         success: true,

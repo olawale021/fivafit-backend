@@ -23,6 +23,12 @@ import {
   forgotPassword,
   resetPassword
 } from '../controllers/authController.js'
+import {
+  getEulaStatus,
+  acceptEulaHandler,
+  getEulaVersion
+} from '../controllers/eulaController.js'
+import { filterProfileContent, filterUsernameContent } from '../middleware/contentFilter.js'
 
 // Configure multer for memory storage
 const storage = multer.memoryStorage()
@@ -106,9 +112,9 @@ router.post('/apple', appleSignIn)
 
 /**
  * POST /api/auth/setup-username
- * Set up username for Google users
+ * Set up username for Google users (with content filtering)
  */
-router.post('/setup-username', authenticateJWT, handleSetupUsername)
+router.post('/setup-username', authenticateJWT, filterUsernameContent, handleSetupUsername)
 
 /**
  * GET /api/auth/profile
@@ -118,9 +124,9 @@ router.get('/profile', authenticateJWT, getProfile)
 
 /**
  * PUT /api/auth/profile
- * Update user profile
+ * Update user profile (with content filtering)
  */
-router.put('/profile', authenticateJWT, updateProfile)
+router.put('/profile', authenticateJWT, filterProfileContent, updateProfile)
 
 /**
  * POST /api/auth/upload-profile-photo
@@ -175,5 +181,23 @@ router.post('/forgot-password', forgotPassword)
  * Reset password with token
  */
 router.post('/reset-password', resetPassword)
+
+/**
+ * GET /api/auth/eula-status
+ * Check if user has accepted the current EULA (requires authentication)
+ */
+router.get('/eula-status', authenticateJWT, getEulaStatus)
+
+/**
+ * POST /api/auth/accept-eula
+ * Accept the EULA/Terms of Service (requires authentication)
+ */
+router.post('/accept-eula', authenticateJWT, acceptEulaHandler)
+
+/**
+ * GET /api/auth/eula-version
+ * Get the current EULA version (public)
+ */
+router.get('/eula-version', getEulaVersion)
 
 export default router

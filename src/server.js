@@ -20,6 +20,7 @@ import savedWorkoutsRoutes from './routes/savedWorkouts.js'
 import progressRoutes from './routes/progress.js'
 import userActivityRoutes from './routes/userActivity.js'
 import affirmationsRoutes from './routes/affirmations.js'
+import reportsRoutes from './routes/reports.js'
 
 // Load environment variables
 dotenv.config()
@@ -132,6 +133,7 @@ app.use('/api/saved-workouts', savedWorkoutsRoutes)
 app.use('/api/progress', progressRoutes)
 app.use('/api/user-activity', userActivityRoutes)
 app.use('/api/affirmations', affirmationsRoutes)
+app.use('/api/reports', reportsRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
