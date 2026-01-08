@@ -495,6 +495,28 @@ export async function deleteUserAccount(userId, reason) {
     // Don't fail deletion if we can't save the reason
   }
 
+  // Delete content reports where user is reporter or reported
+  const { error: reportsError } = await supabase
+    .from('content_reports')
+    .delete()
+    .or(`reporter_id.eq.${userId},reported_user_id.eq.${userId}`)
+
+  if (reportsError) {
+    console.error('❌ Error deleting content reports:', reportsError)
+    // Continue with deletion anyway
+  }
+
+  // Delete user blocks (where user blocked someone or was blocked)
+  const { error: blocksError } = await supabase
+    .from('user_blocks')
+    .delete()
+    .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`)
+
+  if (blocksError) {
+    console.error('❌ Error deleting user blocks:', blocksError)
+    // Continue with deletion anyway
+  }
+
   // Delete user from database
   const { error } = await supabase
     .from('users')
