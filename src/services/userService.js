@@ -211,3 +211,79 @@ export const checkEmailAvailability = async (email) => {
     throw error
   }
 }
+
+/**
+ * Store Apple user data (persists even after account deletion)
+ * This allows us to remember the user's info for future sign-ins since
+ * Apple only provides this data on the first authorization
+ */
+export const storeAppleUserData = async (apple_id, appleData) => {
+  if (!apple_id) return null
+
+  const { email, fullName } = appleData
+
+  // Only store if we have some data to store
+  if (!email && !fullName?.givenName && !fullName?.familyName) return null
+
+  const full_name = fullName && (fullName.givenName || fullName.familyName)
+    ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
+    : null
+
+  try {
+    // Upsert: insert if not exists, update if exists
+    const { data, error } = await supabase
+      .from('apple_user_data')
+      .upsert({
+        apple_id,
+        email: email || null,
+        full_name,
+        given_name: fullName?.givenName || null,
+        family_name: fullName?.familyName || null,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'apple_id'
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error('Error storing Apple user data:', error)
+      return null
+    }
+
+    console.log('✅ Stored Apple user data:', apple_id, '-> name:', full_name, 'email:', email)
+    return data
+  } catch (error) {
+    console.error('Error storing Apple user data:', error)
+    return null
+  }
+}
+
+/**
+ * Retrieve stored Apple user data from mapping table
+ */
+export const getAppleUserData = async (apple_id) => {
+  if (!apple_id) return null
+
+  try {
+    const { data, error } = await supabase
+      .from('apple_user_data')
+      .select('*')
+      .eq('apple_id', apple_id)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error retrieving Apple user data:', error)
+      return null
+    }
+
+    if (data) {
+      console.log('✅ Found stored Apple user data:', apple_id, '-> name:', data.full_name, 'email:', data.email)
+    }
+
+    return data || null
+  } catch (error) {
+    console.error('Error retrieving Apple user data:', error)
+    return null
+  }
+}

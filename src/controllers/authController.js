@@ -252,8 +252,9 @@ export async function handleSetupUsername(req, res) {
     const userResponse = formatUserResponse(updatedUser, true)
 
     res.json({
+      success: true,
       message: 'Username set successfully',
-      user: userResponse
+      data: userResponse
     })
 
     console.log(`✅ Username set for user: ${updatedUser.email} -> @${username}`)

@@ -11,7 +11,9 @@ import {
   updateLastLogin,
   verifyPassword,
   checkUsernameAvailability,
-  checkEmailAvailability
+  checkEmailAvailability,
+  storeAppleUserData,
+  getAppleUserData
 } from './userService.js'
 
 /**
@@ -264,11 +266,43 @@ export async function handleGoogleOAuth(profile) {
 export async function handleAppleOAuth(appleData) {
   const { user: appleUserId, email, fullName, identityToken } = appleData
 
-  // Decode the identity token to get email (Apple only sends email on first sign-in)
+  // Log received data for debugging
+  console.log('🍎 Apple Sign-In - data received:', JSON.stringify({ email, fullName }))
+
+  // Check if Apple provided any data we should store
+  const hasAppleData = email || fullName?.givenName || fullName?.familyName
+
+  // Extract name from fullName object (Apple provides givenName/familyName)
+  let extractedName = fullName && (fullName.givenName || fullName.familyName)
+    ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
+    : null
+
   let userEmail = email
+
+  // If Apple provided data, store it for future sign-ins
+  if (hasAppleData) {
+    console.log('🍎 Apple Sign-In - storing Apple data for future use')
+    await storeAppleUserData(appleUserId, { email, fullName })
+  }
+
+  // If we're missing data, try to get it from our stored mapping
+  if (!extractedName || !userEmail) {
+    const storedData = await getAppleUserData(appleUserId)
+    if (storedData) {
+      if (!extractedName && storedData.full_name) {
+        extractedName = storedData.full_name
+        console.log('🍎 Apple Sign-In - using stored name:', extractedName)
+      }
+      if (!userEmail && storedData.email) {
+        userEmail = storedData.email
+        console.log('🍎 Apple Sign-In - using stored email:', userEmail)
+      }
+    }
+  }
+
+  // If still no email, try to decode from identity token
   if (!userEmail && identityToken) {
     try {
-      // Decode JWT without verification (Apple's public keys verification can be added later)
       const base64Payload = identityToken.split('.')[1]
       const payload = JSON.parse(Buffer.from(base64Payload, 'base64').toString())
       userEmail = payload.email
@@ -278,31 +312,37 @@ export async function handleAppleOAuth(appleData) {
     }
   }
 
+  console.log('🍎 Apple Sign-In - final data: name:', extractedName, 'email:', userEmail)
+
   // Try to find user by Apple ID first
   let user = await findUserByAppleId(appleUserId)
 
   if (user) {
-    // User exists, just log them in (no need to update name)
+    // User exists - update name if we have one and current name is default/missing
     console.log('✅ Found existing Apple user:', user.email)
+    if (extractedName && (!user.full_name || user.full_name === 'Apple User')) {
+      console.log('🔄 Updating user name:', extractedName)
+      user = await updateUser(user.id, { full_name: extractedName })
+    }
   } else if (userEmail) {
     // Try to find by email
     user = await findUserByEmail(userEmail)
 
     if (user) {
-      // Link Apple ID to existing account
+      // Link Apple ID to existing account and update name if needed
       console.log('🔗 Linking Apple ID to existing user:', user.id)
-      user = await updateUser(user.id, { apple_id: appleUserId })
+      const updates = { apple_id: appleUserId }
+      if (extractedName && (!user.full_name || user.full_name === 'Apple User')) {
+        updates.full_name = extractedName
+      }
+      user = await updateUser(user.id, updates)
     } else {
-      // Create new user (only on first sign-in when we have fullName)
-      const name = fullName && (fullName.givenName || fullName.familyName)
-        ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
-        : null
-
-      console.log('👤 Creating new Apple user with email:', userEmail)
+      // Create new user with the data (from Apple or from our stored mapping)
+      console.log('👤 Creating new Apple user with email:', userEmail, 'name:', extractedName)
       user = await createUser({
         apple_id: appleUserId,
         email: userEmail,
-        full_name: name || 'Apple User',
+        full_name: extractedName || null,
       })
     }
   }
