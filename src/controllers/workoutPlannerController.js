@@ -925,3 +925,71 @@ export async function autoDeactivateExpiredPlans(req, res) {
     });
   }
 }
+
+// ============================================================================
+// PUBLIC/SHARED WORKOUT ACCESS
+// ============================================================================
+
+/**
+ * Get shared workout details (accessible to any authenticated user)
+ * Returns data if the workout was shared to feed OR if the user is the owner
+ * GET /api/workout-planner/shared/:completionId
+ */
+export async function getSharedWorkout(req, res) {
+  try {
+    const { completionId } = req.params;
+    const userId = req.user.id;
+
+    // Get the workout completion (allows if shared_to_feed OR user is owner)
+    const completion = await workoutPlannerService.getSharedWorkoutCompletion(completionId, userId);
+
+    if (!completion) {
+      return res.status(404).json({
+        success: false,
+        error: 'Shared workout not found or not shared publicly'
+      });
+    }
+
+    // Get the daily workout details
+    const dailyWorkout = await workoutPlannerService.getDailyWorkoutPublic(completion.daily_workout_id);
+
+    if (!dailyWorkout) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workout details not found'
+      });
+    }
+
+    // Combine the data
+    res.json({
+      success: true,
+      data: {
+        completion: {
+          id: completion.id,
+          duration_minutes: completion.duration_minutes,
+          difficulty_rating: completion.difficulty_rating,
+          energy_level: completion.energy_level,
+          notes: completion.notes,
+          completed_at: completion.completed_at,
+          exercises_completed: completion.exercises_completed
+        },
+        workout: {
+          id: dailyWorkout.id,
+          workout_name: dailyWorkout.workout_name,
+          focus_area: dailyWorkout.focus_area,
+          estimated_duration_minutes: dailyWorkout.estimated_duration_minutes,
+          exercises: dailyWorkout.exercises || [],
+          warm_up_exercises: dailyWorkout.warm_up_exercises || [],
+          workout_tips: dailyWorkout.workout_tips,
+          user: dailyWorkout.user || completion.users
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching shared workout:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch shared workout'
+    });
+  }
+}

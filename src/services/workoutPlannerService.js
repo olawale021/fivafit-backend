@@ -1638,6 +1638,98 @@ export async function getWorkoutCompletionById(completionId, userId) {
 }
 
 // ============================================================================
+// PUBLIC/SHARED WORKOUT ACCESS
+// ============================================================================
+
+/**
+ * Get workout completion by ID for shared/public viewing
+ * Returns data if:
+ * - The workout was shared to feed (shared_to_feed: true), OR
+ * - The requesting user is the owner of the workout
+ */
+export async function getSharedWorkoutCompletion(completionId, requestingUserId = null) {
+  try {
+    // Get the completion without strict shared_to_feed check first
+    const { data, error } = await supabase
+      .from('workout_completions')
+      .select(`
+        *,
+        users:user_id (
+          id,
+          username,
+          full_name,
+          profile_photo_url
+        )
+      `)
+      .eq('id', completionId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+
+    // Allow access if:
+    // 1. The workout is shared to feed (public), OR
+    // 2. The requesting user is the owner
+    if (data.shared_to_feed || (requestingUserId && data.user_id === requestingUserId)) {
+      return data;
+    }
+
+    // Not shared and not the owner - return null
+    return null;
+  } catch (error) {
+    console.error('Error fetching shared workout completion:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get daily workout details for public/shared viewing
+ * Does NOT require ownership check - used when viewing workout from a shared post
+ */
+export async function getDailyWorkoutPublic(dailyWorkoutId) {
+  try {
+    const { data, error } = await supabase
+      .from('daily_workouts')
+      .select(`
+        *,
+        workout_plans!inner(
+          id,
+          plan_name,
+          user_id,
+          users:user_id (
+            id,
+            username,
+            full_name,
+            profile_photo_url
+          )
+        )
+      `)
+      .eq('id', dailyWorkoutId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+
+    // Transform to include user info at top level
+    if (data && data.workout_plans) {
+      return {
+        ...data,
+        user: data.workout_plans.users || null
+      };
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Error fetching daily workout (public):', error);
+    throw error;
+  }
+}
+
+// ============================================================================
 // USER PREFERENCES
 // ============================================================================
 

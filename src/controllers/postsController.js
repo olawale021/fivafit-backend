@@ -228,14 +228,17 @@ export const createPost = async (req, res) => {
 
     console.log(`✅ Post created: ${post.id}`)
 
-    // Update workout_completion with activity_id (if provided)
+    // Update workout_completion with activity_id and mark as shared (if provided)
     if (workoutCompletionId) {
       await supabase
         .from('workout_completions')
-        .update({ activity_id: post.id })
+        .update({
+          activity_id: post.id,
+          shared_to_feed: true
+        })
         .eq('id', workoutCompletionId)
 
-      console.log(`✅ Workout completion updated with activity_id`)
+      console.log(`✅ Workout completion updated with activity_id and shared_to_feed`)
     }
 
     // Increment user's posts_count using raw SQL

@@ -295,4 +295,16 @@ router.post('/auto-skip', workoutPlannerController.autoSkipPastWorkouts);
  */
 router.post('/auto-deactivate', workoutPlannerController.autoDeactivateExpiredPlans);
 
+// ============================================================================
+// PUBLIC/SHARED WORKOUT ACCESS
+// ============================================================================
+
+/**
+ * GET /api/workout-planner/shared/:completionId
+ * Get shared workout details (accessible to any authenticated user)
+ * Only returns data if the workout was shared to feed
+ * This endpoint allows users to view workout details from posts in the feed
+ */
+router.get('/shared/:completionId', workoutPlannerController.getSharedWorkout);
+
 export default router;
