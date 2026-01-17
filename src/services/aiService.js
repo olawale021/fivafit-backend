@@ -243,13 +243,13 @@ export async function identifyEquipmentNameOnly(imageBase64, mimeType, equipment
     **kettlebell** - Kettlebell exercises
     Examples: Kettlebells (any weight)
 
-    **cable** - Cable pulley systems with adjustable height
-    Examples: Cable crossover machine, cable pulley tower, functional trainer, cable column
-    NOT plate-loaded or pin-selected machines with fixed paths
+    **cable** - Cable pulley systems with weight stacks
+    Examples: Cable crossover machine, cable pulley tower, functional trainer, cable column, lat pulldown machine, seated cable row, cable fly machine
+    Includes any machine with a cable/pulley system, even if it has a fixed seat or path
 
-    **leverage machine** - Fixed-path plate-loaded or pin-selected weight machines
-    Examples: Chest press machine, leg press, shoulder press machine, seated row machine, lat pulldown machine (if plate-loaded), leg extension, leg curl, hack squat machine
-    These have a fixed movement path, unlike free-moving cables
+    **leverage machine** - Fixed-path plate-loaded machines (NO cables)
+    Examples: Chest press machine, leg press, shoulder press machine, leg extension, leg curl, hack squat machine, plate-loaded row machine
+    These have a fixed movement path AND use weight plates directly (no cables or pulleys)
 
     **smith machine** - Barbell on vertical/near-vertical fixed track
     Examples: Smith machine (any variation)

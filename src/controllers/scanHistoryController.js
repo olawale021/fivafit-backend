@@ -4,13 +4,54 @@ import {
   deleteScan,
   getUserScanStats,
   searchUserScans,
-  clearUserScanHistory
+  clearUserScanHistory,
+  saveScanToHistory
 } from '../services/scanHistoryService.js'
 
 /**
  * Scan History Controller
  * Handles scan history HTTP requests
  */
+
+/**
+ * POST /api/scan-history
+ * Save a new scan to history
+ */
+export async function createScan(req, res) {
+  try {
+    const userId = req.user.id
+    const scanData = req.body
+
+    if (!scanData || !scanData.name) {
+      return res.status(400).json({
+        error: 'Invalid scan data',
+        message: 'Scan data with equipment name is required'
+      })
+    }
+
+    const result = await saveScanToHistory(userId, scanData)
+
+    if (!result) {
+      return res.status(500).json({
+        error: 'Failed to save scan',
+        message: 'Internal server error while saving scan'
+      })
+    }
+
+    res.json({
+      success: true,
+      data: result
+    })
+
+    console.log(`✅ Saved scan "${scanData.name}" for user: ${req.user.email}`)
+  } catch (error) {
+    console.error('❌ Create scan error:', error)
+    res.status(500).json({
+      error: 'Failed to save scan',
+      message: 'Internal server error while saving scan'
+    })
+  }
+}
 
 /**
  * GET /api/scan-history

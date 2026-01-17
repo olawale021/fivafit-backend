@@ -1,6 +1,7 @@
 import express from 'express'
 import { authenticateJWT } from '../middleware/customAuth.js'
 import {
+  createScan,
   getHistory,
   getScan,
   deleteScanFromHistory,
@@ -28,6 +29,12 @@ router.get('/search', authenticateJWT, searchScans)
  * Get user's scan history with pagination
  */
 router.get('/', authenticateJWT, getHistory)
+
+/**
+ * POST /api/scan-history
+ * Save a new scan to history
+ */
+router.post('/', authenticateJWT, createScan)
 
 /**
  * GET /api/scan-history/:id

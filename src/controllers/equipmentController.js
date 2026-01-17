@@ -26,6 +26,7 @@ const MAX_VARIATIONS_PER_EQUIPMENT = 15
 /**
  * Quick equipment identification - only returns the name and category (fast & cheap)
  * Used to check if equipment exists in database before doing full analysis
+ * Also uploads image to storage for AI training data collection
  */
 export async function identifyEquipmentQuick(req, res) {
   try {
@@ -37,6 +38,7 @@ export async function identifyEquipmentQuick(req, res) {
       })
     }
 
+    const user = req.user
     console.log(`🔍 Quick identification: ${req.file.originalname}`)
 
     // Fetch equipment types from database
@@ -49,7 +51,14 @@ export async function identifyEquipmentQuick(req, res) {
     const imageData = fs.readFileSync(imagePath)
     const imageBase64 = imageData.toString('base64')
 
-    // Clean up the local file immediately
+    // Upload image to storage for AI training data (async, don't block response)
+    let imageUrl = null
+    if (user?.id) {
+      console.log('📤 Uploading image to storage for training data...')
+      imageUrl = await uploadScanImage(imageData, user.id, req.file.mimetype)
+    }
+
+    // Clean up the local file
     fs.unlinkSync(imagePath)
 
     // Quick identification - name and category
@@ -63,7 +72,12 @@ export async function identifyEquipmentQuick(req, res) {
     }
 
     console.log(`✅ Quick identification: ${identificationData.name} → ${identificationData.category}`)
-    res.json(identificationData)
+
+    // Include image URL in response for scan history
+    res.json({
+      ...identificationData,
+      image_url: imageUrl
+    })
 
   } catch (error) {
     console.error('❌ Quick Identification Error:', error)
