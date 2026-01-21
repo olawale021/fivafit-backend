@@ -13,6 +13,7 @@ const recommendationCache = new NodeCache({ stdTTL: 86400, checkperiod: 3600 })
 
 /**
  * Generate a cache key based on user profile
+ * Note: Equipment is NOT included - AI recommendations are equipment-agnostic
  */
 function generateCacheKey(user) {
   const profileData = {
@@ -27,22 +28,19 @@ function generateCacheKey(user) {
 }
 
 /**
- * Pre-filter exercises based on user's body focus to reduce token usage
+ * Pre-filter exercises based on user's body focus and fitness levels
+ * Note: Equipment is NOT filtered here - AI recommendations are equipment-agnostic
+ * The "Based on Your Equipment" section handles equipment filtering separately
  */
 function preFilterExercises(exercises, user) {
   const bodyFocus = user.body_focus || []
   const fitnessLevels = user.fitness_levels || []
 
-  if (bodyFocus.length === 0 && fitnessLevels.length === 0) {
-    // No filters, return random sample of 600
-    return shuffleArray(exercises).slice(0, 600)
-  }
-
   let filtered = exercises
 
   // Filter by body focus if set
   if (bodyFocus.length > 0) {
-    filtered = exercises.filter(ex => {
+    filtered = filtered.filter(ex => {
       const bodyPart = ex.bodyPart?.toLowerCase() || ''
       const target = ex.target?.toLowerCase() || ''
 
@@ -71,10 +69,10 @@ function preFilterExercises(exercises, user) {
     )
   }
 
-  // If we have too few, add some from the full list
-  if (filtered.length < 450) {
-    const remaining = exercises.filter(ex => !filtered.includes(ex))
-    filtered = [...filtered, ...shuffleArray(remaining).slice(0, 600 - filtered.length)]
+  // If no filters or too few results, return random sample
+  if (filtered.length === 0) {
+    console.log('⚠️ No exercises match filters, returning unfiltered sample')
+    return shuffleArray(exercises).slice(0, 600)
   }
 
   // Limit to 600 exercises max
@@ -110,6 +108,7 @@ function buildExerciseSummaries(exercises) {
 
 /**
  * Build the AI prompt for personalized recommendations
+ * Note: Equipment is NOT included - AI recommendations are equipment-agnostic
  */
 function buildRecommendationPrompt(user, exerciseSummaries) {
   const goals = Array.isArray(user.fitness_goal) ? user.fitness_goal : []
@@ -140,7 +139,7 @@ Focus on:
 - Exercises that match their fitness goals
 - Appropriate difficulty for their fitness levels
 - Targeting their selected body focus areas
-- A good variety of equipment and movement patterns
+- Include a variety of equipment types to give the user options
 
 Return ONLY valid JSON in this exact format:
 {

@@ -12,6 +12,8 @@ import {
 /**
  * GET /api/recommendations/ai
  * Get AI-powered personalized exercise recommendations
+ * Note: AI recommendations are based on goals, fitness levels, and body focus only
+ * Equipment filtering is handled separately in the "Based on Your Equipment" section
  */
 export async function getAIRecommendations(req, res) {
   try {

@@ -11,7 +11,8 @@ import {
     getExercisesByBodyPartHandler,
     getExercisesByTargetHandler,
     getExerciseByIdHandler,
-    searchExercisesHandler
+    searchExercisesHandler,
+    matchEquipmentHandler
 } from '../controllers/exerciseController.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -30,6 +31,9 @@ router.get('/', getAllExercisesHandler);
 
 // Search exercises
 router.get('/search', searchExercisesHandler);
+
+// Match equipment names to exercises using AI
+router.post('/match-equipment', matchEquipmentHandler);
 
 // Filter by difficulty (beginner/intermediate/advanced)
 router.get('/difficulty/:difficulty', getExercisesByDifficultyHandler);

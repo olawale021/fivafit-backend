@@ -20,6 +20,10 @@ export async function saveScanToHistory(userId, scanData) {
         target_muscles: scanData.target_muscles,
         usage_tips: scanData.usage_tips,
         recommended_workouts: scanData.recommended_workouts,
+        target_body_part: scanData.target_body_part,
+        primary_exercise: scanData.primary_exercise,
+        related_exercises: scanData.related_exercises,
+        all_exercises: scanData.all_exercises,
         _meta: scanData._meta
       },
       was_cached: scanData._meta?.cached || false,

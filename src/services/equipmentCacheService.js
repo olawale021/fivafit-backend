@@ -14,17 +14,16 @@ import { getWorkoutsByIds } from './workoutService.js'
  */
 
 // Equipment categories mapping for better matching
+// IMPORTANT: These categories must align with the AI prompt categories in aiService.js
 const EQUIPMENT_CATEGORIES = {
+  barbell: ['barbell', 'olympic bar', 'ez bar', 'trap bar', 'bench', 'weight bench', 'incline bench', 'decline bench', 'squat rack', 'power rack', 'half rack'],
   dumbbell: ['dumbbell', 'hex dumbbell', 'rubber dumbbell', 'adjustable dumbbell'],
-  barbell: ['barbell', 'olympic bar', 'ez bar', 'trap bar'],
   kettlebell: ['kettlebell', 'competition kettlebell'],
-  machine: ['machine', 'cable machine', 'smith machine', 'leg press', 'chest press'],
-  cable: ['cable', 'cable machine', 'pulley'],
-  bench: ['bench', 'weight bench', 'incline bench', 'decline bench'],
-  rack: ['rack', 'squat rack', 'power rack', 'half rack'],
-  plate: ['weight plate', 'bumper plate', 'plate'],
-  cardio: ['treadmill', 'bike', 'elliptical', 'rowing machine', 'stair climber'],
-  bodyweight: ['pull up bar', 'dip station', 'parallel bars'],
+  cable: ['cable', 'cable machine', 'pulley', 'cable crossover', 'functional trainer', 'lat pulldown', 'seated row', 'cable column'],
+  'leverage machine': ['leverage machine', 'chest press machine', 'shoulder press machine', 'leg press', 'leg extension', 'leg curl', 'hack squat', 'plate-loaded'],
+  'smith machine': ['smith machine', 'smith'],
+  'body weight': ['pull up bar', 'pull-up bar', 'dip station', 'parallel bars', 'gymnastic rings', 'captain\'s chair'],
+  band: ['resistance band', 'therapy band', 'loop band', 'trx', 'suspension trainer'],
 }
 
 /**

@@ -264,14 +264,21 @@ export async function getExercisesByCategory(category) {
 
 /**
  * Get exercises by equipment type
+ * @param {string} equipment - The equipment type to filter by
+ * @param {string|null} bodyPart - Optional body part to further filter results
  */
-export async function getExercisesByEquipment(equipment) {
+export async function getExercisesByEquipment(equipment, bodyPart = null) {
     try {
-        const { data, error } = await supabase
+        let query = supabase
             .from('exercises')
             .select('*')
-            .eq('equipment', equipment)
-            .order('name');
+            .eq('equipment', equipment);
+
+        if (bodyPart) {
+            query = query.eq('bodyPart', bodyPart);
+        }
+
+        const { data, error } = await query.order('name');
 
         if (error) throw error;
 

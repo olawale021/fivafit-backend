@@ -1,5 +1,5 @@
 import fs from 'fs'
-import { identifyEquipmentWithAI, identifyEquipmentNameOnly } from '../services/aiService.js'
+import { identifyEquipmentWithAI, identifyEquipmentNameOnly, matchExerciseFromList } from '../services/aiService.js'
 import {
   categorizeEquipment,
   getRandomCachedEquipment,
@@ -12,7 +12,7 @@ import {
 import { saveWorkouts } from '../services/workoutService.js'
 import { uploadScanImage } from '../services/storageService.js'
 import { saveScanToHistory } from '../services/scanHistoryService.js'
-import { listEquipmentTypes } from '../services/exerciseService.js'
+import { listEquipmentTypes, getExercisesByEquipment } from '../services/exerciseService.js'
 
 // Maximum variations to store per equipment (not per category, per specific equipment name)
 // E.g., "Lat Pulldown Machine" gets 15 variations, "Cable Row Machine" gets its own 15
@@ -24,8 +24,10 @@ const MAX_VARIATIONS_PER_EQUIPMENT = 15
  */
 
 /**
- * Quick equipment identification - only returns the name and category (fast & cheap)
- * Used to check if equipment exists in database before doing full analysis
+ * Quick equipment identification - returns the name, category, and matched exercises
+ * Uses two-stage AI identification:
+ * 1. First AI call identifies equipment name, category, and target body part
+ * 2. Second AI call matches the equipment to the best exercise in our database
  * Also uploads image to storage for AI training data collection
  */
 export async function identifyEquipmentQuick(req, res) {
@@ -61,7 +63,8 @@ export async function identifyEquipmentQuick(req, res) {
     // Clean up the local file
     fs.unlinkSync(imagePath)
 
-    // Quick identification - name and category
+    // STEP 1: First AI call - identify equipment name, category, target body part
+    console.log('🔍 Step 1: AI equipment identification...')
     const identificationData = await identifyEquipmentNameOnly(imageBase64, req.file.mimetype, equipmentTypes)
 
     if (identificationData.error) {
@@ -71,12 +74,54 @@ export async function identifyEquipmentQuick(req, res) {
       })
     }
 
-    console.log(`✅ Quick identification: ${identificationData.name} → ${identificationData.category}`)
+    const { name, category, target_body_part, confidence } = identificationData
+    const isLowConfidence = (confidence || 0) < 70
 
-    // Include image URL in response for scan history
+    console.log(`✅ Step 1 complete: ${name} → ${category} (body part: ${target_body_part}, confidence: ${confidence}%)`)
+    if (isLowConfidence) {
+      console.log(`⚠️ Low confidence detection - alternatives: ${identificationData.alternatives?.join(', ') || 'none'}`)
+    }
+
+    // STEP 2: Fetch filtered exercises from database
+    console.log(`🔍 Step 2: Fetching exercises for ${category} + ${target_body_part}...`)
+    const exercisesResult = await getExercisesByEquipment(category, target_body_part)
+    const exercises = exercisesResult.success ? exercisesResult.data : []
+    console.log(`📋 Found ${exercises.length} matching exercises`)
+
+    // STEP 3: Second AI call - match best exercise from filtered list
+    let primaryExercise = null
+    let relatedExercises = []
+
+    if (exercises.length > 0) {
+      console.log('🔍 Step 3: AI matching exercise from list...')
+      const matchResult = await matchExerciseFromList(name, exercises)
+      console.log(`✅ Step 3 complete: Best match = ${matchResult.best_match} (confidence: ${matchResult.match_confidence}%)`)
+
+      // Find the full exercise data for the best match
+      primaryExercise = exercises.find(e => e.name === matchResult.best_match) || null
+
+      // Find related exercises
+      relatedExercises = exercises.filter(e =>
+        matchResult.related_exercises?.includes(e.name)
+      )
+
+      // If no primary was found but we have exercises, use the first one
+      if (!primaryExercise && exercises.length > 0) {
+        console.log('⚠️ Best match not found in list, using first exercise as fallback')
+        primaryExercise = exercises[0]
+      }
+    } else {
+      console.log('⚠️ No exercises found for this equipment/body part combination')
+    }
+
+    // STEP 4: Return response with matched exercises
     res.json({
       ...identificationData,
-      image_url: imageUrl
+      image_url: imageUrl,
+      low_confidence: isLowConfidence,
+      primary_exercise: primaryExercise,
+      related_exercises: relatedExercises,
+      all_exercises: exercises
     })
 
   } catch (error) {
@@ -133,7 +178,15 @@ export async function identifyEquipment(req, res) {
 
     const equipmentName = nameData.name
     const category = categorizeEquipment(equipmentName)
-    console.log(`✅ Identified: ${equipmentName} (Category: ${category})`)
+    const identificationConfidence = nameData.confidence || 0
+    const visualDescription = nameData.visual_description || ''
+    const alternatives = nameData.alternatives || []
+    const isLowConfidence = identificationConfidence < 70
+
+    console.log(`✅ Identified: ${equipmentName} (Category: ${category}, Confidence: ${identificationConfidence}%)`)
+    if (isLowConfidence && alternatives.length > 0) {
+      console.log(`⚠️ Low confidence - alternatives: ${alternatives.join(', ')}`)
+    }
 
     // STEP 2: Check cache for this specific equipment name
     const variationCount = await countVariations(equipmentName, userGender)
@@ -259,12 +312,16 @@ export async function identifyEquipment(req, res) {
     const responseData = {
       ...finalData,
       image_url: imageUrl, // Include image URL in response
+      low_confidence: isLowConfidence,
+      alternatives: isLowConfidence ? alternatives : [],
       _meta: {
         cached: usedCache,
         equipment_name: equipmentName,
         category: category,
         variation_count: variationCount,
-        scan_duration_ms: scanDuration
+        scan_duration_ms: scanDuration,
+        confidence: identificationConfidence,
+        visual_description: visualDescription
       }
     }
 

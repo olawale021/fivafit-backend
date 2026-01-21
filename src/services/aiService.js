@@ -223,14 +223,51 @@ export async function identifyEquipmentNameOnly(imageBase64, mimeType, equipment
     : 'barbell, dumbbell, cable, kettlebell, body weight, band, leverage machine, smith machine';
 
   const prompt = `
-    Identify this gym equipment and return ONLY a valid JSON object (no markdown formatting):
+    STEP 1: First, describe what you see in this image (visual features, colors, shape, handles, cables, weight stack, etc.)
+    STEP 2: Then identify the equipment based on those visual features
+    STEP 3: Rate your confidence (0-100) in the identification
+    STEP 4: Identify the primary body part this equipment targets
+    STEP 5: If confidence is below 80, provide 2 alternative guesses
+
+    Return ONLY a valid JSON object (no markdown formatting):
     {
       "name": "Specific name of the equipment",
-      "category": "equipment category"
+      "category": "equipment category",
+      "confidence": 85,
+      "target_body_part": "chest",
+      "visual_description": "I see a large machine with a weight stack, cable system, high pulley attachment, and a wide grip bar...",
+      "alternatives": ["Alternative Name 1", "Alternative Name 2"]
     }
+
+    IMPORTANT: The "target_body_part" must be one of these exact values:
+    back, cardio, chest, lower arms, lower legs, neck, shoulders, upper arms, upper legs, waist
 
     IMPORTANT: The "category" must be one of these exact values from our database:
     ${equipmentTypesList}
+
+    ═══════════════════════════════════════════════════════════════
+    COMMONLY CONFUSED EQUIPMENT - PAY CLOSE ATTENTION:
+    ═══════════════════════════════════════════════════════════════
+
+    🔄 CABLE MACHINES vs LEVERAGE MACHINES:
+    - CABLE: Has cables, pulleys, and flexible movement paths. The resistance comes through cables.
+      Look for: Cables running through pulleys, weight stack with pin selection, adjustable pulley heights
+    - LEVERAGE: Has fixed movement path with NO cables. Uses plate-loaded or fixed pivot arms.
+      Look for: Fixed metal arms/handles that move on a set arc, weight plates loaded directly
+
+    🔄 LAT PULLDOWN vs SEATED ROW:
+    - LAT PULLDOWN: Cable comes from ABOVE, pull DOWN toward chest. Usually has thigh pad to hold you down.
+    - SEATED ROW: Cable comes from IN FRONT at chest height, pull TOWARD you. Has chest pad or foot platform.
+
+    🔄 SMITH MACHINE vs POWER RACK:
+    - SMITH MACHINE: Barbell is FIXED to vertical rails, can only move up/down on track. Has safety hooks.
+    - POWER RACK: Open cage with FREE barbell, bar is not attached. Has adjustable safety bars/pins.
+
+    🔄 CHEST PRESS vs SHOULDER PRESS MACHINE:
+    - CHEST PRESS: Handles are at CHEST level, you push FORWARD/out horizontally
+    - SHOULDER PRESS: Handles start at SHOULDER level, you push UP vertically/overhead
+
+    ═══════════════════════════════════════════════════════════════
 
     Choose the category that best matches this equipment. Use these guidelines:
 
@@ -264,15 +301,23 @@ export async function identifyEquipmentNameOnly(imageBase64, mimeType, equipment
     - Chest press MACHINE → "leverage machine" (fixed path)
     - Cable crossover → "cable" (adjustable pulleys)
     - Bench alone → "barbell" (typically used with barbells)
-    - Lat pulldown with plates/pins → "leverage machine"
+    - Lat pulldown with cable/pulley → "cable"
     - Cable pulley tower → "cable"
 
-    Be specific and accurate with the name, but ensure the category matches one of the database types exactly.
+    CONFIDENCE SCORING GUIDE:
+    - 90-100: Clear, well-lit image, distinctive equipment features visible
+    - 70-89: Good image but some features unclear or equipment is common/generic
+    - 50-69: Partial view, poor lighting, or equipment looks similar to others
+    - Below 50: Very unclear image, multiple possible equipment types
+
+    Be specific and accurate with the name, and ensure the category matches one of the database types exactly.
+    If confidence < 80, you MUST provide 2 alternatives in the "alternatives" array.
+    If confidence >= 80, the "alternatives" array can be empty [].
     If it's not gym equipment, return { "error": "Not gym equipment identified" }
   `
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: "gpt-4o", // Better accuracy for visual recognition
     messages: [
       {
         role: "user",
@@ -287,12 +332,235 @@ export async function identifyEquipmentNameOnly(imageBase64, mimeType, equipment
         ]
       }
     ],
-    max_tokens: 150 // Slightly larger for name + category
+    max_tokens: 300 // Increased for confidence, visual description, and alternatives
   })
 
   const text = response.choices[0].message.content
   const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim()
   return JSON.parse(jsonStr)
+}
+
+/**
+ * Match the identified equipment name to the best exercise from a list
+ * Uses AI to understand that equipment names can have multiple aliases
+ * (e.g., "Pec Deck" = "Seated Fly" = "Chest Fly Machine")
+ */
+export async function matchExerciseFromList(equipmentName, exercises) {
+  if (!exercises || exercises.length === 0) {
+    return {
+      best_match: null,
+      match_confidence: 0,
+      reason: 'No exercises provided to match against',
+      related_exercises: []
+    }
+  }
+
+  const exerciseList = exercises.map(e => `- ${e.name} (targets: ${e.target})`).join('\n')
+
+  const prompt = `
+    The user scanned gym equipment identified as: "${equipmentName}"
+
+    Here are exercises from our database that use similar equipment:
+    ${exerciseList}
+
+    Which exercise best matches "${equipmentName}"?
+    Consider that equipment can have multiple names (e.g., "Pec Deck" = "Seated Fly" = "Chest Fly Machine")
+
+    Return ONLY a valid JSON object (no markdown formatting):
+    {
+      "best_match": "exact exercise name from list above",
+      "match_confidence": 95,
+      "reason": "why this is the best match",
+      "related_exercises": ["other relevant exercise names from list"]
+    }
+
+    IMPORTANT:
+    - "best_match" MUST be an exact name from the provided exercise list
+    - "related_exercises" should contain 2-4 other exercises from the list that could also work on this equipment
+    - If no exercise matches well, set best_match to null and confidence to 0
+  `
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini', // Cheaper model OK for text matching
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 300
+  })
+
+  const text = response.choices[0].message.content
+  const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim()
+  return JSON.parse(jsonStr)
+}
+
+/**
+ * Match multiple equipment names to best exercises from database
+ * Used for "Based on Your Equipment" section to get AI-matched exercises
+ *
+ * @param {Array} equipmentList - Array of equipment names (e.g., ["Pec Deck", "Leg Press", "Dumbbell"])
+ * @param {Array} exercises - All available exercises from database
+ * @returns {Object} Map of equipment name to matched exercises
+ */
+export async function matchEquipmentToExercises(equipmentList, exercises) {
+  if (!equipmentList || equipmentList.length === 0 || !exercises || exercises.length === 0) {
+    return {}
+  }
+
+  // Build concise exercise list for AI
+  const exerciseList = exercises.map(e =>
+    `${e.id}|${e.name}|${e.bodyPart}|${e.target}|${e.equipment}`
+  ).join('\n')
+
+  const prompt = `
+    Match each piece of gym equipment to the best exercises from our database.
+
+    USER'S SAVED EQUIPMENT:
+    ${equipmentList.map((eq, i) => `${i + 1}. "${eq}"`).join('\n')}
+
+    AVAILABLE EXERCISES (format: id|name|bodyPart|target|equipment):
+    ${exerciseList}
+
+    For each equipment, find:
+    1. The PRIMARY exercise (best match for that exact equipment)
+    2. 2-4 RELATED exercises (other exercises you can do on that equipment)
+
+    ═══════════════════════════════════════════════════════════════
+    CRITICAL EQUIPMENT MATCHING RULES:
+    ═══════════════════════════════════════════════════════════════
+
+    **Dip Station / Dip Bar / Parallel Bars:**
+    - MUST match exercises with "dip" in the name (e.g., "Chest Dip", "Triceps Dip")
+    - These are body weight exercises performed on parallel bars
+    - DO NOT match sit-ups, crunches, or ab exercises
+    - DO NOT match any exercises that don't involve dipping motion
+
+    **Pull Up Bar / Chin Up Bar:**
+    - MUST match exercises with "pull-up", "pull up", "chin-up", "chin up" in the name
+    - These are body weight hanging/pulling exercises
+    - DO NOT match push-ups or floor exercises
+
+    **Pec Deck / Chest Fly Machine:**
+    - Match "Lever Seated Fly" or exercises with "fly", "pec" in name
+    - These are chest isolation exercises
+
+    **Lat Pulldown Machine:**
+    - Match exercises with "lat pulldown", "pulldown" in name
+    - These are cable back exercises
+
+    **Leg Press:**
+    - Match exercises with "leg press" in name
+    - These are leg compound exercises
+
+    **Generic Equipment (barbell, dumbbell, cable, kettlebell):**
+    - Match any exercise that uses that equipment type
+
+    ═══════════════════════════════════════════════════════════════
+
+    Return ONLY valid JSON:
+    {
+      "matches": {
+        "equipment_name_1": {
+          "primary_exercise_id": "ex_123",
+          "related_exercise_ids": ["ex_456", "ex_789"]
+        },
+        "equipment_name_2": {
+          "primary_exercise_id": "ex_abc",
+          "related_exercise_ids": ["ex_def", "ex_ghi"]
+        }
+      }
+    }
+
+    IMPORTANT:
+    - Use EXACT equipment names from the list as keys (lowercase)
+    - Use EXACT exercise IDs from the available exercises list
+    - If no good match exists, set primary_exercise_id to null
+    - Prioritize exercises that specifically mention the equipment name
+    - For "dip station" ONLY return dip exercises, NEVER sit-ups or crunches
+  `
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+      temperature: 0.3, // Lower temperature for more consistent matching
+      max_tokens: 1500
+    })
+
+    const result = JSON.parse(response.choices[0].message.content)
+    const matches = result.matches || {}
+
+    // Build exercise lookup map
+    const exerciseMap = new Map(exercises.map(e => [e.id, e]))
+
+    // Validate and filter matches for specific equipment types
+    const validatedMatches = {}
+    for (const [equipmentName, match] of Object.entries(matches)) {
+      const normalizedName = equipmentName.toLowerCase()
+
+      // Special validation for dip station - ONLY allow dip exercises
+      if (normalizedName.includes('dip') && !normalizedName.includes('pulldown')) {
+        const validateDipExercise = (exerciseId) => {
+          const exercise = exerciseMap.get(exerciseId)
+          if (!exercise) return false
+          const name = exercise.name?.toLowerCase() || ''
+          return name.includes('dip') && !name.includes('sit') && !name.includes('crunch')
+        }
+
+        validatedMatches[equipmentName] = {
+          primary_exercise_id: validateDipExercise(match.primary_exercise_id) ? match.primary_exercise_id : null,
+          related_exercise_ids: (match.related_exercise_ids || []).filter(validateDipExercise)
+        }
+
+        // If validation removed everything, find dip exercises manually
+        if (!validatedMatches[equipmentName].primary_exercise_id) {
+          const dipExercises = exercises.filter(e => {
+            const name = e.name?.toLowerCase() || ''
+            return name.includes('dip') && e.equipment === 'body weight'
+          })
+          if (dipExercises.length > 0) {
+            validatedMatches[equipmentName].primary_exercise_id = dipExercises[0].id
+            validatedMatches[equipmentName].related_exercise_ids = dipExercises.slice(1, 4).map(e => e.id)
+          }
+        }
+
+        console.log(`✅ Validated dip station: primary=${validatedMatches[equipmentName].primary_exercise_id}, related=${validatedMatches[equipmentName].related_exercise_ids.length}`)
+      }
+      // Special validation for pull-up bar - ONLY allow pull-up/chin-up exercises
+      else if (normalizedName.includes('pull up') || normalizedName.includes('pull-up') || normalizedName.includes('chin up')) {
+        const validatePullUpExercise = (exerciseId) => {
+          const exercise = exerciseMap.get(exerciseId)
+          if (!exercise) return false
+          const name = exercise.name?.toLowerCase() || ''
+          return (name.includes('pull-up') || name.includes('pull up') || name.includes('chin-up') || name.includes('chin up'))
+        }
+
+        validatedMatches[equipmentName] = {
+          primary_exercise_id: validatePullUpExercise(match.primary_exercise_id) ? match.primary_exercise_id : null,
+          related_exercise_ids: (match.related_exercise_ids || []).filter(validatePullUpExercise)
+        }
+
+        // If validation removed everything, find pull-up exercises manually
+        if (!validatedMatches[equipmentName].primary_exercise_id) {
+          const pullUpExercises = exercises.filter(e => {
+            const name = e.name?.toLowerCase() || ''
+            return (name.includes('pull-up') || name.includes('pull up') || name.includes('chin-up') || name.includes('chin up')) && e.equipment === 'body weight'
+          })
+          if (pullUpExercises.length > 0) {
+            validatedMatches[equipmentName].primary_exercise_id = pullUpExercises[0].id
+            validatedMatches[equipmentName].related_exercise_ids = pullUpExercises.slice(1, 4).map(e => e.id)
+          }
+        }
+      }
+      // No special validation needed for other equipment
+      else {
+        validatedMatches[equipmentName] = match
+      }
+    }
+
+    return validatedMatches
+  } catch (error) {
+    console.error('Error matching equipment to exercises:', error)
+    return {}
+  }
 }
 
 /**
