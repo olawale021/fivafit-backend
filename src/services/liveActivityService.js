@@ -248,10 +248,8 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
       isGoalReached,
     };
 
-    await sendLiveActivityUpdate(pushToken, contentState);
-
-    // Store last synced steps for reference
-    await supabase
+    // Store steps in DB first (so we don't lose data if push fails)
+    const { error: dbError } = await supabase
       .from('live_activity_tokens')
       .update({
         last_steps: currentSteps,
@@ -259,6 +257,15 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
         last_sync_at: new Date().toISOString(),
       })
       .eq('user_id', userId);
+
+    if (dbError) {
+      console.error('[LiveActivity] Failed to update DB:', dbError);
+    } else {
+      console.log('[LiveActivity] DB updated: steps=', currentSteps, 'goal=', goalSteps);
+    }
+
+    // Then send push (may fail but DB is already updated)
+    await sendLiveActivityUpdate(pushToken, contentState);
 
     return true;
   } catch (error) {
