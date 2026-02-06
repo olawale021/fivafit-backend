@@ -1,12 +1,16 @@
+// Load environment variables FIRST before any other imports
+import dotenv from 'dotenv'
+dotenv.config()
+
 import express from 'express'
 import cors from 'cors'
-import dotenv from 'dotenv'
 import session from 'express-session'
 import passport from 'passport'
 import os from 'os'
 import { supabase } from './config/supabase.js'
 import { startCronJobs, stopCronJobs } from './services/cronService.js'
 import { startAffirmationCronJobs } from './services/affirmationCronService.js'
+import { startLiveActivityCron, stopLiveActivityCron } from './services/liveActivityCronService.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
 import scanHistoryRoutes from './routes/scanHistory.js'
@@ -23,9 +27,7 @@ import userActivityRoutes from './routes/userActivity.js'
 import affirmationsRoutes from './routes/affirmations.js'
 import reportsRoutes from './routes/reports.js'
 import recommendationsRoutes from './routes/recommendations.js'
-
-// Load environment variables
-dotenv.config()
+import liveActivityRoutes from './routes/liveActivity.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -150,6 +152,7 @@ app.use('/api/user-activity', userActivityRoutes)
 app.use('/api/affirmations', affirmationsRoutes)
 app.use('/api/reports', reportsRoutes)
 app.use('/api/recommendations', recommendationsRoutes)
+app.use('/api/live-activity', liveActivityRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -221,9 +224,15 @@ app.listen(PORT, () => {
 
     // Start affirmation cron jobs (daily 10am & 9pm, re-engagement every 6 hours)
     startAffirmationCronJobs()
+
+    // Start Live Activity cron job (every 5 minutes)
+    startLiveActivityCron('*/5 * * * *')
   } else {
     console.log('⏸️  Cron jobs disabled in development mode')
     console.log('   Set ENABLE_CRON_JOBS=true in .env to enable them')
+
+    // Still start Live Activity cron in dev if APNs is configured
+    startLiveActivityCron('*/5 * * * *')
   }
 })
 
@@ -231,11 +240,13 @@ app.listen(PORT, () => {
 process.on('SIGINT', () => {
   console.log('\n🛑 Received SIGINT. Shutting down gracefully...')
   stopCronJobs()
+  stopLiveActivityCron()
   process.exit(0)
 })
 
 process.on('SIGTERM', () => {
   console.log('\n🛑 Received SIGTERM. Shutting down gracefully...')
   stopCronJobs()
+  stopLiveActivityCron()
   process.exit(0)
 })

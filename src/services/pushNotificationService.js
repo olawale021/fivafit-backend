@@ -469,9 +469,101 @@ export const updateNotificationPreferences = async (userId, updates) => {
   }
 };
 
+/**
+ * Send a silent/background push notification to wake the app
+ * This is used to trigger background HealthKit sync for Live Activities
+ * @param {string} userId - User ID
+ * @param {Object} data - Data payload for the silent push
+ * @returns {Promise<Array>} Array of push tickets
+ */
+export const sendSilentPushNotification = async (userId, data = {}) => {
+  try {
+    // Get all active push tokens for this user
+    const { data: pushTokens, error: tokensError } = await supabase
+      .from('push_tokens')
+      .select('id, token, platform')
+      .eq('user_id', userId)
+      .eq('is_active', true);
+
+    if (tokensError) {
+      console.error(`❌ Error fetching push tokens for user ${userId}:`, tokensError);
+      return [];
+    }
+
+    if (!pushTokens || pushTokens.length === 0) {
+      console.log(`⏭️  No active push tokens for user ${userId}`);
+      return [];
+    }
+
+    console.log(`📤 Sending silent push to user ${userId} on ${pushTokens.length} device(s)`);
+
+    // Prepare silent push messages
+    const messages = [];
+    const tokenIds = [];
+
+    for (const tokenData of pushTokens) {
+      // Validate Expo push token format
+      if (!Expo.isExpoPushToken(tokenData.token)) {
+        console.error(`❌ Invalid Expo push token: ${tokenData.token}`);
+        continue;
+      }
+
+      // Silent push: no title, body, or sound - only data with _contentAvailable
+      messages.push({
+        to: tokenData.token,
+        data: {
+          ...data,
+          _contentAvailable: true, // iOS silent push flag
+          type: 'silent_step_sync',
+        },
+        priority: 'high',
+        // iOS: content-available for background fetch
+        _contentAvailable: true,
+      });
+
+      tokenIds.push(tokenData.id);
+    }
+
+    if (messages.length === 0) {
+      console.log(`⏭️  No valid push tokens for user ${userId}`);
+      return [];
+    }
+
+    // Send silent push notifications
+    const tickets = await expo.sendPushNotificationsAsync(messages);
+
+    console.log(`✅ Silent push sent to ${tickets.length} device(s)`);
+
+    // Handle errors
+    for (let i = 0; i < tickets.length; i++) {
+      const ticket = tickets[i];
+      const tokenId = tokenIds[i];
+
+      if (ticket.status === 'error') {
+        console.error(`❌ Error in silent push ticket:`, ticket.message);
+
+        if (ticket.details?.error === 'DeviceNotRegistered') {
+          console.log(`🗑️  Marking token as inactive: ${tokenId}`);
+          await supabase
+            .from('push_tokens')
+            .update({ is_active: false })
+            .eq('id', tokenId);
+        }
+      }
+    }
+
+    return tickets;
+
+  } catch (error) {
+    console.error('❌ Error sending silent push notification:', error);
+    return [];
+  }
+};
+
 export default {
   sendPushNotification,
   sendBatchPushNotifications,
+  sendSilentPushNotification,
   updatePushToken,
   removePushToken,
   setPushNotificationsEnabled,
