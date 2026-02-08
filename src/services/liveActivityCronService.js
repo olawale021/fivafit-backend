@@ -85,12 +85,12 @@ async function pushResetToWidget(token) {
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to reset widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid tokens
-    if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered')) {
-      console.log(`[LiveActivityCron] Removing invalid token for user ${token.user_id}`);
+    // Remove invalid/expired tokens
+    if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
+      console.log(`[LiveActivityCron] Removing invalid/expired token for user ${token.user_id}`);
       await supabase
         .from('live_activity_tokens')
-        .delete()
+        .update({ push_token: null })
         .eq('user_id', token.user_id);
     }
     return false;
@@ -139,12 +139,12 @@ async function pushUpdateToWidget(token) {
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to update widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid tokens
-    if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered')) {
-      console.log(`[LiveActivityCron] Removing invalid token for user ${token.user_id}`);
+    // Remove invalid/expired tokens (keep device_token for silent push)
+    if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
+      console.log(`[LiveActivityCron] Removing invalid/expired push_token for user ${token.user_id}`);
       await supabase
         .from('live_activity_tokens')
-        .delete()
+        .update({ push_token: null })
         .eq('user_id', token.user_id);
     }
     return false;
