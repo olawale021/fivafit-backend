@@ -225,14 +225,14 @@ app.listen(PORT, () => {
     // Start affirmation cron jobs (daily 10am & 9pm, re-engagement every 6 hours)
     startAffirmationCronJobs()
 
-    // Start Live Activity cron job (every 5 minutes)
-    startLiveActivityCron('*/5 * * * *')
+    // Start Live Activity cron job (every 15 minutes)
+    startLiveActivityCron()
   } else {
     console.log('⏸️  Cron jobs disabled in development mode')
     console.log('   Set ENABLE_CRON_JOBS=true in .env to enable them')
 
     // Still start Live Activity cron in dev if APNs is configured
-    startLiveActivityCron('*/5 * * * *')
+    startLiveActivityCron()
   }
 })
 

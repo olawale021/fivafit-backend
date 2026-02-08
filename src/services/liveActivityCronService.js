@@ -111,7 +111,7 @@ async function updateAllLiveActivities() {
  * Start the Live Activity cron job
  * @param {string} schedule - Cron schedule (default: every 15 minutes)
  */
-export function startLiveActivityCron(schedule = '*/3 * * * *') {
+export function startLiveActivityCron(schedule = '*/15 * * * *') {
   if (liveActivityCronJob) {
     console.log('[LiveActivityCron] Cron job already running');
     return;
