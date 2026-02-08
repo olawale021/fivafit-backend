@@ -222,6 +222,39 @@ export async function unregisterLiveActivityToken(userId) {
 }
 
 /**
+ * Calculate step rate per minute based on previous sync data
+ * @param {number} currentSteps - Current step count
+ * @param {number|null} lastSteps - Last synced step count
+ * @param {string|null} lastSyncAt - Last sync timestamp
+ * @returns {number} Steps per minute rate (capped at 200)
+ */
+function calculateStepRate(currentSteps, lastSteps, lastSyncAt) {
+  if (!lastSteps || !lastSyncAt) {
+    return 0;
+  }
+
+  const now = Date.now();
+  const lastTime = new Date(lastSyncAt).getTime();
+  const minutesElapsed = (now - lastTime) / 60000;
+
+  // Need at least 30 seconds between updates for meaningful rate
+  if (minutesElapsed < 0.5) {
+    return 0;
+  }
+
+  const stepDelta = currentSteps - lastSteps;
+
+  // Only return positive rates
+  if (stepDelta <= 0) {
+    return 0;
+  }
+
+  const rate = stepDelta / minutesElapsed;
+  // Cap at 200 steps/min (very fast running pace)
+  return Math.min(rate, 200);
+}
+
+/**
  * Update a user's Live Activity with new step data
  * @param {string} userId - User ID
  * @param {number} currentSteps - Current step count
@@ -236,16 +269,32 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
       return false;
     }
 
+    // Get previous sync data for step rate calculation
+    const { data: prevData } = await supabase
+      .from('live_activity_tokens')
+      .select('last_steps, last_sync_at')
+      .eq('user_id', userId)
+      .single();
+
     const progressPercentage = goalSteps > 0
       ? Math.min(Math.round((currentSteps / goalSteps) * 100), 100)
       : 0;
     const isGoalReached = currentSteps >= goalSteps;
+
+    // Calculate step rate based on previous sync
+    const stepRatePerMinute = calculateStepRate(
+      currentSteps,
+      prevData?.last_steps,
+      prevData?.last_sync_at
+    );
 
     const contentState = {
       currentSteps,
       goalSteps,
       progressPercentage,
       isGoalReached,
+      stepRatePerMinute,
+      lastSyncTimestamp: Date.now() / 1000, // Unix timestamp in seconds
     };
 
     // Store steps in DB first (so we don't lose data if push fails)
@@ -261,7 +310,7 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
     if (dbError) {
       console.error('[LiveActivity] Failed to update DB:', dbError);
     } else {
-      console.log('[LiveActivity] DB updated: steps=', currentSteps, 'goal=', goalSteps);
+      console.log('[LiveActivity] DB updated: steps=', currentSteps, 'goal=', goalSteps, 'rate=', stepRatePerMinute.toFixed(1), 'steps/min');
     }
 
     // Then send push (may fail but DB is already updated)
