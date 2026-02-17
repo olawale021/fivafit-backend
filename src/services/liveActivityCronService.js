@@ -73,7 +73,7 @@ async function pushResetToWidget(token) {
     console.log(`[LiveActivityCron] Reset widget to 0 for user ${token.user_id}`);
 
     // Update DB to reflect the reset
-    await supabase
+    const { error: dbError } = await supabase
       .from('live_activity_tokens')
       .update({
         last_pushed_steps: 0,
@@ -81,17 +81,25 @@ async function pushResetToWidget(token) {
       })
       .eq('user_id', token.user_id);
 
+    if (dbError) {
+      console.error(`[LiveActivityCron] Failed to update DB after reset for user ${token.user_id}:`, dbError);
+    }
+
     return true;
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to reset widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid/expired tokens
+    // Remove invalid/expired tokens + device_token to prevent re-registration cycle
     if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
-      console.log(`[LiveActivityCron] Removing invalid/expired token for user ${token.user_id}`);
-      await supabase
+      console.log(`[LiveActivityCron] Removing invalid/expired tokens for user ${token.user_id} (push_token + device_token)`);
+      const { error: updateError } = await supabase
         .from('live_activity_tokens')
-        .update({ push_token: null })
+        .update({ push_token: null, device_token: null })
         .eq('user_id', token.user_id);
+
+      if (updateError) {
+        console.error(`[LiveActivityCron] Failed to remove tokens for user ${token.user_id}:`, updateError);
+      }
     }
     return false;
   }
@@ -127,7 +135,7 @@ async function pushUpdateToWidget(token) {
     console.log(`[LiveActivityCron] Updated widget for user ${token.user_id}: ${currentSteps} steps, rate=${stepRatePerMinute.toFixed(1)}/min`);
 
     // Update pushed tracking
-    await supabase
+    const { error: dbError } = await supabase
       .from('live_activity_tokens')
       .update({
         last_pushed_steps: currentSteps,
@@ -135,17 +143,26 @@ async function pushUpdateToWidget(token) {
       })
       .eq('user_id', token.user_id);
 
+    if (dbError) {
+      console.error(`[LiveActivityCron] Failed to update push tracking for user ${token.user_id}:`, dbError);
+    }
+
     return true;
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to update widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid/expired tokens (keep device_token for silent push)
+    // Remove invalid/expired tokens + device_token to prevent re-registration cycle
+    // (silent push would wake app → app re-registers expired token → infinite loop)
     if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
-      console.log(`[LiveActivityCron] Removing invalid/expired push_token for user ${token.user_id}`);
-      await supabase
+      console.log(`[LiveActivityCron] Removing invalid/expired tokens for user ${token.user_id} (push_token + device_token)`);
+      const { error: updateError } = await supabase
         .from('live_activity_tokens')
-        .update({ push_token: null })
+        .update({ push_token: null, device_token: null })
         .eq('user_id', token.user_id);
+
+      if (updateError) {
+        console.error(`[LiveActivityCron] Failed to remove tokens for user ${token.user_id}:`, updateError);
+      }
     }
     return false;
   }

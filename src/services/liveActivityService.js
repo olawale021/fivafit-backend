@@ -481,6 +481,15 @@ export async function sendSilentPushToAllUsers() {
       } catch (err) {
         console.error(`[LiveActivity] Failed to send silent push to user ${token.user_id}:`, err.message);
         failCount++;
+
+        // Remove invalid/expired device tokens
+        if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
+          console.log(`[LiveActivity] Removing invalid device_token for user ${token.user_id}`);
+          await supabase
+            .from('live_activity_tokens')
+            .update({ device_token: null })
+            .eq('user_id', token.user_id);
+        }
       }
     }
 
