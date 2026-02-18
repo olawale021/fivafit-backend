@@ -89,16 +89,16 @@ async function pushResetToWidget(token) {
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to reset widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid/expired tokens + device_token to prevent re-registration cycle
+    // Delete row with invalid/expired tokens to prevent re-registration cycle
     if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
-      console.log(`[LiveActivityCron] Removing invalid/expired tokens for user ${token.user_id} (push_token + device_token)`);
-      const { error: updateError } = await supabase
+      console.log(`[LiveActivityCron] Deleting expired token row for user ${token.user_id}`);
+      const { error: deleteError } = await supabase
         .from('live_activity_tokens')
-        .update({ push_token: null, device_token: null })
+        .delete()
         .eq('user_id', token.user_id);
 
-      if (updateError) {
-        console.error(`[LiveActivityCron] Failed to remove tokens for user ${token.user_id}:`, updateError);
+      if (deleteError) {
+        console.error(`[LiveActivityCron] Failed to delete token for user ${token.user_id}:`, deleteError);
       }
     }
     return false;
@@ -151,17 +151,17 @@ async function pushUpdateToWidget(token) {
   } catch (err) {
     console.error(`[LiveActivityCron] Failed to update widget for user ${token.user_id}:`, err.message);
 
-    // Remove invalid/expired tokens + device_token to prevent re-registration cycle
+    // Delete row with invalid/expired tokens to prevent re-registration cycle
     // (silent push would wake app → app re-registers expired token → infinite loop)
     if (err.message.includes('BadDeviceToken') || err.message.includes('Unregistered') || err.message.includes('ExpiredToken')) {
-      console.log(`[LiveActivityCron] Removing invalid/expired tokens for user ${token.user_id} (push_token + device_token)`);
-      const { error: updateError } = await supabase
+      console.log(`[LiveActivityCron] Deleting expired token row for user ${token.user_id}`);
+      const { error: deleteError } = await supabase
         .from('live_activity_tokens')
-        .update({ push_token: null, device_token: null })
+        .delete()
         .eq('user_id', token.user_id);
 
-      if (updateError) {
-        console.error(`[LiveActivityCron] Failed to remove tokens for user ${token.user_id}:`, updateError);
+      if (deleteError) {
+        console.error(`[LiveActivityCron] Failed to delete token for user ${token.user_id}:`, deleteError);
       }
     }
     return false;
