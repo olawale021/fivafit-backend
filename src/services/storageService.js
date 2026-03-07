@@ -7,6 +7,7 @@ import crypto from 'crypto'
  */
 
 const SCAN_IMAGES_BUCKET = 'scan-images'
+const FOOD_IMAGES_BUCKET = 'food-images'
 
 /**
  * Upload scan image to Supabase Storage
@@ -49,6 +50,78 @@ export async function uploadScanImage(imageBuffer, userId, mimeType) {
   } catch (error) {
     console.error('Error in uploadScanImage:', error)
     return null
+  }
+}
+
+/**
+ * Upload food image to Supabase Storage
+ * @param {Buffer} imageBuffer - Image file buffer
+ * @param {string} userId - User ID for organizing files
+ * @param {string} mimeType - Image MIME type (e.g., 'image/jpeg')
+ * @returns {string|null} - Public URL of uploaded image or null
+ */
+export async function uploadFoodImage(imageBuffer, userId, mimeType) {
+  try {
+    const fileExtension = getFileExtension(mimeType)
+    const timestamp = Date.now()
+    const randomString = crypto.randomBytes(8).toString('hex')
+    const fileName = `${userId}/${timestamp}-${randomString}.${fileExtension}`
+
+    console.log(`📤 Uploading food image: ${fileName}`)
+
+    const { data, error } = await supabase.storage
+      .from(FOOD_IMAGES_BUCKET)
+      .upload(fileName, imageBuffer, {
+        contentType: mimeType,
+        cacheControl: '3600',
+        upsert: false
+      })
+
+    if (error) {
+      console.error('Error uploading food image to storage:', error)
+      return null
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(FOOD_IMAGES_BUCKET)
+      .getPublicUrl(fileName)
+
+    console.log(`✅ Food image uploaded successfully: ${urlData.publicUrl}`)
+    return urlData.publicUrl
+  } catch (error) {
+    console.error('Error in uploadFoodImage:', error)
+    return null
+  }
+}
+
+/**
+ * Delete food image from storage
+ * @param {string} imageUrl - Public URL of the food image
+ * @returns {boolean} - Success status
+ */
+export async function deleteFoodImage(imageUrl) {
+  try {
+    const match = imageUrl.match(/\/food-images\/(.+)$/)
+    const fileName = match ? match[1] : null
+    if (!fileName) {
+      console.error('Invalid food image URL:', imageUrl)
+      return false
+    }
+
+    const { error } = await supabase.storage
+      .from(FOOD_IMAGES_BUCKET)
+      .remove([fileName])
+
+    if (error) {
+      console.error('Error deleting food image:', error)
+      return false
+    }
+
+    console.log(`🗑️ Deleted food image: ${fileName}`)
+    return true
+  } catch (error) {
+    console.error('Error in deleteFoodImage:', error)
+    return false
   }
 }
 

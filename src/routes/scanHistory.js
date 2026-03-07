@@ -1,5 +1,6 @@
 import express from 'express'
 import { authenticateJWT } from '../middleware/customAuth.js'
+import { requirePremium } from '../middleware/premiumAuth.js'
 import {
   createScan,
   getHistory,
@@ -34,7 +35,7 @@ router.get('/', authenticateJWT, getHistory)
  * POST /api/scan-history
  * Save a new scan to history
  */
-router.post('/', authenticateJWT, createScan)
+router.post('/', authenticateJWT, requirePremium, createScan)
 
 /**
  * GET /api/scan-history/:id

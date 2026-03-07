@@ -10,6 +10,7 @@ import os from 'os'
 import { supabase } from './config/supabase.js'
 import { startCronJobs, stopCronJobs } from './services/cronService.js'
 import { startAffirmationCronJobs } from './services/affirmationCronService.js'
+import { startNutritionCronJobs } from './services/nutritionCronService.js'
 import { startLiveActivityCron, stopLiveActivityCron } from './services/liveActivityCronService.js'
 import authRoutes from './routes/auth.js'
 import aiRoutes from './routes/ai.js'
@@ -28,6 +29,8 @@ import affirmationsRoutes from './routes/affirmations.js'
 import reportsRoutes from './routes/reports.js'
 import recommendationsRoutes from './routes/recommendations.js'
 import liveActivityRoutes from './routes/liveActivity.js'
+import nutritionRoutes from './routes/nutrition.js'
+import subscriptionRoutes from './routes/subscription.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -153,6 +156,8 @@ app.use('/api/affirmations', affirmationsRoutes)
 app.use('/api/reports', reportsRoutes)
 app.use('/api/recommendations', recommendationsRoutes)
 app.use('/api/live-activity', liveActivityRoutes)
+app.use('/api/nutrition', nutritionRoutes)
+app.use('/api/subscription', subscriptionRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
@@ -224,6 +229,9 @@ app.listen(PORT, () => {
 
     // Start affirmation cron jobs (daily 10am & 9pm, re-engagement every 6 hours)
     startAffirmationCronJobs()
+
+    // Start nutrition meal reminder cron jobs (9am, 2pm & 8pm)
+    startNutritionCronJobs()
 
     // Start Live Activity cron job (every 15 minutes)
     startLiveActivityCron()

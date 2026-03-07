@@ -1,6 +1,7 @@
 import express from 'express'
 import multer from 'multer'
 import { authenticateJWT } from '../middleware/customAuth.js'
+import { requirePremium } from '../middleware/premiumAuth.js'
 import { identifyEquipment, identifyEquipmentQuick } from '../controllers/equipmentController.js'
 
 const router = express.Router()
@@ -13,13 +14,13 @@ const upload = multer({ dest: 'uploads/' })
  * Quick equipment identification - only returns name (fast, cheap)
  * Used to check if equipment exists in database before doing full analysis
  */
-router.post('/identify-quick', authenticateJWT, upload.single('image'), identifyEquipmentQuick)
+router.post('/identify-quick', authenticateJWT, requirePremium, upload.single('image'), identifyEquipmentQuick)
 
 /**
  * POST /api/ai/identify
  * Full equipment identification with workout generation (slow, detailed)
  * Only used when equipment is not found in database
  */
-router.post('/identify', authenticateJWT, upload.single('image'), identifyEquipment)
+router.post('/identify', authenticateJWT, requirePremium, upload.single('image'), identifyEquipment)
 
 export default router

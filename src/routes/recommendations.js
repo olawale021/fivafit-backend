@@ -1,5 +1,6 @@
 import express from 'express'
 import { authenticateJWT } from '../middleware/customAuth.js'
+import { requirePremium } from '../middleware/premiumAuth.js'
 import {
   getAIRecommendations,
   clearCache,
@@ -14,7 +15,7 @@ const router = express.Router()
  * Query params:
  *   - refresh=true: Force regenerate (bypass cache)
  */
-router.get('/ai', authenticateJWT, getAIRecommendations)
+router.get('/ai', authenticateJWT, requirePremium, getAIRecommendations)
 
 /**
  * POST /api/recommendations/clear-cache

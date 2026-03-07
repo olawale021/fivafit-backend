@@ -262,19 +262,51 @@ function calculateStepRate(currentSteps, lastSteps, lastSyncAt) {
  */
 export async function updateUserSteps(userId, currentSteps, goalSteps) {
   try {
-    const pushToken = await getLiveActivityToken(userId);
+    // Get previous sync data for step rate calculation AND push token
+    const { data: prevData, error: fetchError } = await supabase
+      .from('live_activity_tokens')
+      .select('push_token, last_steps, last_sync_at')
+      .eq('user_id', userId)
+      .single();
 
-    if (!pushToken) {
-      console.log('[LiveActivity] No token found for user:', userId);
+    if (fetchError || !prevData) {
+      console.log('[LiveActivity] No token row found for user:', userId);
       return false;
     }
 
-    // Get previous sync data for step rate calculation
-    const { data: prevData } = await supabase
-      .from('live_activity_tokens')
-      .select('last_steps, last_sync_at')
-      .eq('user_id', userId)
-      .single();
+    const pushToken = prevData.push_token;
+
+    // Always update DB if incoming data is latest (higher steps or new day)
+    const prevSteps = prevData.last_steps || 0;
+    const isNewDay = prevData.last_sync_at
+      ? new Date(prevData.last_sync_at).toDateString() !== new Date().toDateString()
+      : true;
+    const hasNewerData = currentSteps >= prevSteps || isNewDay;
+
+    if (hasNewerData) {
+      const { error: dbError } = await supabase
+        .from('live_activity_tokens')
+        .update({
+          last_steps: currentSteps,
+          last_goal: goalSteps,
+          last_sync_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
+
+      if (dbError) {
+        console.error('[LiveActivity] Failed to update DB:', dbError);
+      } else {
+        console.log('[LiveActivity] DB updated: steps=', currentSteps, 'goal=', goalSteps);
+      }
+    } else {
+      console.log('[LiveActivity] Skipping DB update — incoming steps', currentSteps, 'not newer than stored', prevSteps);
+    }
+
+    // Skip push if no token registered (DB still got updated above)
+    if (!pushToken) {
+      console.log('[LiveActivity] No push token for user:', userId, '— DB updated only');
+      return true;
+    }
 
     const progressPercentage = goalSteps > 0
       ? Math.min(Math.round((currentSteps / goalSteps) * 100), 100)
@@ -284,8 +316,8 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
     // Calculate step rate based on previous sync
     const stepRatePerMinute = calculateStepRate(
       currentSteps,
-      prevData?.last_steps,
-      prevData?.last_sync_at
+      prevSteps,
+      prevData.last_sync_at
     );
 
     const contentState = {
@@ -294,27 +326,12 @@ export async function updateUserSteps(userId, currentSteps, goalSteps) {
       progressPercentage,
       isGoalReached,
       stepRatePerMinute,
-      lastSyncTimestamp: Date.now() / 1000, // Unix timestamp in seconds
+      lastSyncTimestamp: Date.now() / 1000,
     };
 
-    // Store steps in DB first (so we don't lose data if push fails)
-    const { error: dbError } = await supabase
-      .from('live_activity_tokens')
-      .update({
-        last_steps: currentSteps,
-        last_goal: goalSteps,
-        last_sync_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId);
-
-    if (dbError) {
-      console.error('[LiveActivity] Failed to update DB:', dbError);
-    } else {
-      console.log('[LiveActivity] DB updated: steps=', currentSteps, 'goal=', goalSteps, 'rate=', stepRatePerMinute.toFixed(1), 'steps/min');
-    }
-
-    // Then send push (may fail but DB is already updated)
+    // Send push to update widget
     await sendLiveActivityUpdate(pushToken, contentState);
+    console.log('[LiveActivity] Push sent: steps=', currentSteps, 'rate=', stepRatePerMinute.toFixed(1), 'steps/min');
 
     return true;
   } catch (error) {

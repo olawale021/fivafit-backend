@@ -1,8 +1,10 @@
 import { Expo } from 'expo-server-sdk';
 import { supabase } from '../config/supabase.js';
 
-// Create Expo SDK client
-const expo = new Expo();
+// Create Expo SDK client (access token required for EAS-built apps)
+const expo = new Expo({
+  accessToken: process.env.EXPO_ACCESS_TOKEN,
+});
 
 /**
  * Send push notification to a user (supports multiple devices)
@@ -100,18 +102,21 @@ export const sendPushNotification = async (userId, notificationData) => {
     console.log(`✅ Push notifications sent to ${tickets.length} device(s)`);
 
     // Update last_used_at for successfully sent tokens and handle errors
+    const receiptIds = [];
     for (let i = 0; i < tickets.length; i++) {
       const ticket = tickets[i];
       const tokenId = tokenIds[i];
 
       if (ticket.status === 'ok') {
+        console.log(`📋 Push ticket OK for user ${userId}, receipt: ${ticket.id}`);
+        if (ticket.id) receiptIds.push(ticket.id);
         // Update last_used_at
         await supabase
           .from('push_tokens')
           .update({ last_used_at: new Date().toISOString() })
           .eq('id', tokenId);
       } else if (ticket.status === 'error') {
-        console.error(`❌ Error in push ticket:`, ticket.message);
+        console.error(`❌ Error in push ticket for user ${userId}:`, ticket.message, ticket.details);
 
         // If token is invalid, mark as inactive
         if (ticket.details?.error === 'DeviceNotRegistered') {
@@ -122,6 +127,31 @@ export const sendPushNotification = async (userId, notificationData) => {
             .eq('id', tokenId);
         }
       }
+    }
+
+    // Check receipts after a delay to see if Apple actually delivered
+    if (receiptIds.length > 0) {
+      setTimeout(async () => {
+        try {
+          const receiptChunks = expo.chunkPushNotificationReceiptIds(receiptIds);
+          for (const chunk of receiptChunks) {
+            const receipts = await expo.getPushNotificationReceiptsAsync(chunk);
+            for (const [receiptId, receipt] of Object.entries(receipts)) {
+              if (receipt.status === 'ok') {
+                console.log(`✅ Receipt ${receiptId}: delivered successfully`);
+              } else if (receipt.status === 'error') {
+                console.error(`❌ Receipt ${receiptId}: ${receipt.message} (${receipt.details?.error})`);
+                // If DeviceNotRegistered, find and deactivate the token
+                if (receipt.details?.error === 'DeviceNotRegistered') {
+                  console.log(`🗑️  Token is invalid per receipt - marking inactive`);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error('❌ Error checking push receipts:', err);
+        }
+      }, 30000); // Check receipts after 30 seconds
     }
 
     return tickets;
@@ -140,21 +170,17 @@ export const sendPushNotification = async (userId, notificationData) => {
 export const sendBatchPushNotifications = async (notifications) => {
   try {
     const messages = [];
-    const userIds = [];
 
-    // Prepare messages for all users
+    // Prepare messages for all users using push_tokens table
     for (const { userId, notification } of notifications) {
+      // Check if push notifications are enabled
       const { data: user } = await supabase
         .from('users')
-        .select('push_token, push_notifications_enabled')
+        .select('push_notifications_enabled')
         .eq('id', userId)
         .single();
 
-      if (!user?.push_token || !user.push_notifications_enabled) {
-        continue;
-      }
-
-      if (!Expo.isExpoPushToken(user.push_token)) {
+      if (!user?.push_notifications_enabled) {
         continue;
       }
 
@@ -163,18 +189,33 @@ export const sendBatchPushNotifications = async (notifications) => {
         continue;
       }
 
-      messages.push({
-        to: user.push_token,
-        sound: 'default',
-        title: notification.title,
-        body: notification.body,
-        data: notification.data || {},
-        badge: 1,
-        priority: 'high',
-        channelId: 'workout-notifications',
-      });
+      // Get all active tokens for this user (multi-device)
+      const { data: pushTokens, error: tokensError } = await supabase
+        .from('push_tokens')
+        .select('token')
+        .eq('user_id', userId)
+        .eq('is_active', true);
 
-      userIds.push(userId);
+      if (tokensError || !pushTokens || pushTokens.length === 0) {
+        continue;
+      }
+
+      for (const tokenData of pushTokens) {
+        if (!Expo.isExpoPushToken(tokenData.token)) {
+          continue;
+        }
+
+        messages.push({
+          to: tokenData.token,
+          sound: 'default',
+          title: notification.title,
+          body: notification.body,
+          data: notification.data || {},
+          badge: 1,
+          priority: 'high',
+          channelId: notification.channelId || 'default',
+        });
+      }
     }
 
     if (messages.length === 0) {

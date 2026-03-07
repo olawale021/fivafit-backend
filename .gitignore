@@ -106,3 +106,5 @@ migrations/database_workouts.sql
 migrations/profile_photos_storage_policy.sql
 migrations/add_no_plan_affirmation_type.sql
 AuthKey_7R28WKV6U8_steplm.p8
+logs.txt
+uploads/692f80bd846bf25070fdcfaa97b2fa71

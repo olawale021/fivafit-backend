@@ -221,7 +221,19 @@ async function updateWithSmartTriggers() {
         ? (Date.now() - new Date(token.last_push_at).getTime()) / 60000
         : 999;
 
-      // Smart trigger: 10 min elapsed OR 500+ step change
+      // Staleness check: only push if DB has NEWER data than what was last pushed
+      // This prevents the cron from overwriting fresher local widget data
+      const lastSyncTime = token.last_sync_at ? new Date(token.last_sync_at).getTime() : 0;
+      const lastPushTime = token.last_push_at ? new Date(token.last_push_at).getTime() : 0;
+
+      if (lastSyncTime <= lastPushTime && stepDelta < 500) {
+        // DB hasn't been updated since last push — widget already has this data or newer
+        console.log(`[LiveActivityCron] Skipping user ${token.user_id} — no new DB data since last push`);
+        skipped++;
+        continue;
+      }
+
+      // Smart trigger: 10 min elapsed OR 500+ step change (only if DB has fresh data)
       const shouldPush = minutesSincePush >= 10 || stepDelta >= 500;
 
       if (shouldPush) {

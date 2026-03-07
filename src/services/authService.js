@@ -382,7 +382,7 @@ export async function updateUserProfile(userId, updates) {
   const allowedUpdates = [
     'full_name', 'bio', 'date_of_birth', 'gender',
     'height_cm', 'weight_kg', 'target_weight_kg', 'fitness_goal', 'fitness_levels', 'body_focus',
-    'daily_step_goal', 'daily_calorie_goal', 'privacy_level', 'socials'
+    'daily_step_goal', 'daily_calorie_goal', 'macro_protein_pct', 'macro_carbs_pct', 'macro_fat_pct', 'daily_sugar_goal', 'privacy_level', 'socials'
   ]
 
   const filteredUpdates = {}
@@ -461,6 +461,10 @@ export function formatUserResponse(user, includeFullProfile = false) {
       body_focus: user.body_focus,
       daily_step_goal: user.daily_step_goal,
       daily_calorie_goal: user.daily_calorie_goal,
+      macro_protein_pct: user.macro_protein_pct,
+      macro_carbs_pct: user.macro_carbs_pct,
+      macro_fat_pct: user.macro_fat_pct,
+      daily_sugar_goal: user.daily_sugar_goal,
       privacy_level: user.privacy_level,
       socials: user.socials,
       last_login: user.last_login,

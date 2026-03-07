@@ -1,6 +1,7 @@
 import express from 'express';
 import * as workoutPlannerController from '../controllers/workoutPlannerController.js';
 import { authenticateToken } from '../middleware/auth.js';
+import { requirePremium } from '../middleware/premiumAuth.js';
 
 const router = express.Router();
 
@@ -23,7 +24,7 @@ router.use(authenticateToken);
  *   selected_days: ["monday", "wednesday", "friday"] // optional
  * }
  */
-router.post('/generate', workoutPlannerController.generateWorkoutPlan);
+router.post('/generate', requirePremium, workoutPlannerController.generateWorkoutPlan);
 
 /**
  * POST /api/workout-planner/generate-preview
@@ -40,7 +41,7 @@ router.post('/generate', workoutPlannerController.generateWorkoutPlan);
  *
  * Response includes 3 exercise alternatives for each exercise slot
  */
-router.post('/generate-preview', workoutPlannerController.generatePlanPreview);
+router.post('/generate-preview', requirePremium, workoutPlannerController.generatePlanPreview);
 
 /**
  * POST /api/workout-planner/generate-async
@@ -58,7 +59,7 @@ router.post('/generate-preview', workoutPlannerController.generatePlanPreview);
  *   }
  * }
  */
-router.post('/generate-async', workoutPlannerController.generatePlanAsync);
+router.post('/generate-async', requirePremium, workoutPlannerController.generatePlanAsync);
 
 /**
  * GET /api/workout-planner/jobs/:jobId
