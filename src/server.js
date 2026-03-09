@@ -31,6 +31,7 @@ import recommendationsRoutes from './routes/recommendations.js'
 import liveActivityRoutes from './routes/liveActivity.js'
 import nutritionRoutes from './routes/nutrition.js'
 import subscriptionRoutes from './routes/subscription.js'
+import adminRoutes from './routes/admin.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -52,10 +53,14 @@ function getLocalIP() {
 app.use(cors({
   origin: [
     'http://localhost:3000',
+    'http://localhost:4040',
     'http://localhost:8081',
     'exp://localhost:8081',
-    // Add your Expo development URLs here
-    'exp://192.168.1.100:8081', // Replace with your local IP
+    'exp://192.168.1.100:8081',
+    'https://www.stepmode.app',
+    'https://stepmode.app',
+    /\.stepmode\.app$/,
+    /\.vercel\.app$/,
   ],
   credentials: true,
 }))
@@ -158,6 +163,7 @@ app.use('/api/recommendations', recommendationsRoutes)
 app.use('/api/live-activity', liveActivityRoutes)
 app.use('/api/nutrition', nutritionRoutes)
 app.use('/api/subscription', subscriptionRoutes)
+app.use('/api/admin', adminRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {

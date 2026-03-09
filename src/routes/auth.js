@@ -92,7 +92,8 @@ router.post('/login', login)
  * Initiate Google OAuth
  */
 router.get('/google', passport.authenticate('google', {
-  scope: ['profile', 'email']
+  scope: ['profile', 'email'],
+  prompt: 'select_account'
 }))
 
 /**

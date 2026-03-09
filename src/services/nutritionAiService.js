@@ -108,7 +108,7 @@ OTHER RULES:
         ]
       }
     ],
-    temperature: 0.1,
+    temperature: 0,
     max_tokens: 1000
   })
 
@@ -184,15 +184,15 @@ async function fetchNutritionFromPerplexity(foodItems) {
     messages: [
       {
         role: 'system',
-        content: `You are a precise nutrition database. Given a list of food items with portions, return accurate calorie and macronutrient data using USDA values. Return ONLY valid JSON, no extra text.`
+        content: `You are a clinical-grade nutrition calculator. Search across nutrition databases (USDA FoodData Central, Nutritionix, MyFitnessPal, CalorieKing, national food databases) and food packaging data to find the most accurate nutrition values. Prioritize published database entries over estimates. For regional, ethnic, or restaurant-specific foods, search for those specific entries rather than approximating from generic ingredients. Return ONLY valid JSON.`
       },
       {
         role: 'user',
-        content: `Provide accurate nutrition data for each of these food items:
+        content: `Look up precise nutrition data for each item. Search broadly across nutrition databases and food sources:
 
 ${itemList}
 
-Return a JSON object with this exact structure:
+Return this exact JSON structure:
 {
   "items": [
     {
@@ -208,16 +208,20 @@ Return a JSON object with this exact structure:
   ]
 }
 
-Rules:
-- Match each item by name — keep the same name from the input
-- Use accurate USDA/nutrition database values for the stated portion
-- calories is an integer, macros are decimals with 1 decimal place
-- Air-fried and roasted foods have LESS fat than deep-fried — get this right
-- Account for the actual cooking method in the name, not an assumed method
-- Return ONLY the JSON object, no markdown or explanation`
+Strict rules:
+- Search multiple nutrition sources. Prefer published database entries (USDA, Nutritionix, food labels) over estimates.
+- For ethnic/regional foods (e.g. jollof rice, dal makhani, bibimbap), search for those specific dishes — do not approximate from generic Western equivalents.
+- For restaurant/brand items (e.g. "Chick-fil-A nuggets"), use the published nutrition from that brand.
+- Preserve the exact name and serving_size from the input — do not rename or re-estimate portions.
+- Scale nutrition values proportionally to the stated serving size. Example: if a source lists per 100g and user says 200g, double all values.
+- Cooking method matters: grilled, fried, baked, raw, boiled have different nutrition profiles. Match the correct one.
+- For composite/mixed dishes, search for the whole dish entry, not individual ingredients.
+- Calories must be an integer. Macros must have exactly 1 decimal place.
+- Cross-check: (protein_g × 4) + (carbs_g × 4) + (fat_g × 9) should be within 10% of calories.
+- Return ONLY the JSON object. No markdown, no explanation, no sources.`
       }
     ],
-    temperature: 0.1,
+    temperature: 0,
     max_tokens: 1500
   })
 
@@ -287,18 +291,19 @@ export async function analyzeFoodPhoto(imageBuffer, mimeType) {
  */
 export async function analyzeFoodText(textDescription) {
   try {
-    console.log('📝 Analyzing food text with Perplexity Sonar:', textDescription)
+    console.log('📝 Analyzing food text:', textDescription)
 
+    // Step 1: Parse text into food items (names + portions only)
     const response = await perplexity.chat.completions.create({
       model: 'sonar',
       messages: [
         {
           role: 'system',
-          content: `You are a precise nutrition database and food parser. Given a text description of food, identify individual food items, estimate portions if not specified, and return accurate calorie and macronutrient data. Return ONLY valid JSON, no extra text.`
+          content: `You are a food parser. Given a text description, identify individual food items and their portions. Return ONLY valid JSON, no extra text.`
         },
         {
           role: 'user',
-          content: `Parse this food description and provide nutrition data for each item:
+          content: `Parse this food description into individual items with portions:
 
 "${textDescription}"
 
@@ -306,57 +311,65 @@ Return a JSON object with this exact structure:
 {
   "items": [
     {
-      "name": "specific food name",
-      "serving_size": "portion size (use the stated amount or estimate a typical serving)",
-      "calories": 250,
-      "protein_g": 30.0,
-      "carbs_g": 0.0,
-      "fat_g": 14.0,
-      "fiber_g": 0.0,
-      "sugar_g": 5.0
+      "name": "specific food name (e.g. grilled chicken wing)",
+      "serving_size": "portion (use stated amount or estimate typical serving, e.g. 3 pieces, 200g, 1 cup)"
     }
   ]
 }
 
 Rules:
-- Parse the description into individual food items
-- If a portion is specified (e.g., "200g"), use that; otherwise estimate a typical serving
-- Use accurate USDA/nutrition database values
-- calories is an integer, macros are decimals with 1 decimal place
+- Split into individual food items
+- Include cooking method in the name if mentioned (grilled, fried, baked, etc.)
+- If quantity is stated, use it; otherwise estimate a typical single serving
 - Return ONLY the JSON object, no markdown or explanation`
         }
       ],
-      temperature: 0.1,
-      max_tokens: 1000
+      temperature: 0,
+      max_tokens: 500
     })
 
     const text = response.choices[0]?.message?.content || ''
-    console.log('📝 Perplexity text response:', text.substring(0, 300))
+    console.log('📝 Parsed food items:', text.substring(0, 300))
 
     let parsed
     try {
       parsed = parseJsonResponse(text)
     } catch (parseError) {
-      console.error('❌ Failed to parse Perplexity text response:', parseError.message)
-      return { items: [], error: 'Failed to parse nutrition data from text' }
+      console.error('❌ Failed to parse text response:', parseError.message)
+      return { items: [], error: 'Failed to parse food description' }
     }
 
     if (!parsed.items || parsed.items.length === 0) {
       return { items: [], error: 'Could not identify food items from the description' }
     }
 
-    console.log(`✅ Perplexity parsed ${parsed.items.length} items from text`)
+    console.log(`✅ Parsed ${parsed.items.length} food items from text`)
 
-    // Cache the nutrition results for future lookups
-    saveToCache(parsed.items).catch(() => {})
+    // Step 2: Get nutrition data via cache-first pipeline (same as photo flow)
+    const nutritionItems = await getNutritionData(parsed.items)
+
+    // Merge parsed names with nutrition data
+    const mergedItems = parsed.items.map((item, i) => {
+      const nutrition = nutritionItems[i] || {}
+      return {
+        name: item.name,
+        serving_size: item.serving_size,
+        calories: nutrition.calories || 0,
+        protein_g: nutrition.protein_g || 0,
+        carbs_g: nutrition.carbs_g || 0,
+        fat_g: nutrition.fat_g || 0,
+        fiber_g: nutrition.fiber_g || 0,
+        sugar_g: nutrition.sugar_g || 0,
+      }
+    })
 
     return {
-      items: parsed.items,
+      items: mergedItems,
       original_text: textDescription,
-      ai_raw: { perplexity: parsed }
+      ai_raw: { parsed_items: parsed, nutrition: nutritionItems }
     }
   } catch (error) {
-    console.error('❌ Perplexity text analysis error:', error)
+    console.error('❌ Food text analysis error:', error)
     return { items: [], error: 'Failed to get nutrition data from text' }
   }
 }
