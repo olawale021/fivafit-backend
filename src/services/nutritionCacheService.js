@@ -11,6 +11,47 @@ function normalize(name) {
 }
 
 /**
+ * Word-number map for parseGrams
+ */
+const WORD_NUMBERS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+}
+
+/**
+ * Extract gram weight from a free-form serving size string.
+ * Returns null if grams can't be determined.
+ *
+ * "approximately 250 grams" → 250
+ * "about 200g"              → 200
+ * "one whole egg (50g)"     → 50
+ * "~150 grams"              → 150
+ * "1 cup"                   → null
+ */
+export function parseGrams(servingStr) {
+  if (!servingStr) return null
+
+  let s = servingStr.toLowerCase().trim()
+
+  // Strip filler words
+  s = s.replace(/\b(approximately|about|roughly|around)\b/g, '')
+  s = s.replace(/~/g, '')
+
+  // Convert word-numbers to digits
+  for (const [word, digit] of Object.entries(WORD_NUMBERS)) {
+    s = s.replace(new RegExp(`\\b${word}\\b`, 'g'), String(digit))
+  }
+
+  // Match gram patterns: "250g", "250 grams", "250gm", "250 gm"
+  const match = s.match(/(\d+(?:\.\d+)?)\s*(?:g(?:rams?)?|gm)\b/)
+  if (match) {
+    return parseFloat(match[1])
+  }
+
+  return null
+}
+
+/**
  * Look up cached nutrition data for a list of food items
  * @param {Array} items - [{ name, serving_size }]
  * @returns {object} - { cached: Map<index, nutritionData>, uncached: [{ index, name, serving_size }] }
@@ -31,44 +72,52 @@ export async function lookupCache(items) {
     servingSize: (item.serving_size || '').trim()
   }))
 
-  // Query all at once using OR conditions
+  // Query by food_name_normalized only (not serving_size)
+  const uniqueNames = [...new Set(lookups.map(l => l.nameNorm))]
+
   const { data, error } = await supabase
     .from('nutrition_cache')
     .select('*')
     .gt('last_used_at', cutoff.toISOString())
-    .in('food_name_normalized', lookups.map(l => l.nameNorm))
+    .in('food_name_normalized', uniqueNames)
 
   if (error) {
     console.error('[NutritionCache] Lookup error:', error.message)
-    // On error, treat everything as uncached
     return { cached, uncached: items.map((item, i) => ({ index: i, ...item })) }
   }
 
-  // Build a map of cached results: "name|serving" → row
+  // Build map: normalized_name → row
   const cacheMap = new Map()
   for (const row of (data || [])) {
-    const key = `${row.food_name_normalized}|${row.serving_size}`
-    cacheMap.set(key, row)
+    cacheMap.set(row.food_name_normalized, row)
   }
 
-  // Match each item
+  // Match each item with scaling
   for (const lookup of lookups) {
-    const key = `${lookup.nameNorm}|${lookup.servingSize}`
-    const hit = cacheMap.get(key)
+    const hit = cacheMap.get(lookup.nameNorm)
 
     if (hit) {
+      // Determine scaling ratio
+      let ratio = 1
+      const cachedGrams = hit.reference_grams ? parseFloat(hit.reference_grams) : null
+      const requestedGrams = parseGrams(lookup.servingSize)
+
+      if (cachedGrams && requestedGrams) {
+        ratio = requestedGrams / cachedGrams
+      }
+
       cached.set(lookup.index, {
         name: items[lookup.index].name,
         serving_size: items[lookup.index].serving_size,
-        calories: hit.calories,
-        protein_g: parseFloat(hit.protein_g),
-        carbs_g: parseFloat(hit.carbs_g),
-        fat_g: parseFloat(hit.fat_g),
-        fiber_g: parseFloat(hit.fiber_g),
-        sugar_g: parseFloat(hit.sugar_g),
+        calories: Math.round(hit.calories * ratio),
+        protein_g: parseFloat((parseFloat(hit.protein_g) * ratio).toFixed(1)),
+        carbs_g: parseFloat((parseFloat(hit.carbs_g) * ratio).toFixed(1)),
+        fat_g: parseFloat((parseFloat(hit.fat_g) * ratio).toFixed(1)),
+        fiber_g: parseFloat((parseFloat(hit.fiber_g) * ratio).toFixed(1)),
+        sugar_g: parseFloat((parseFloat(hit.sugar_g) * ratio).toFixed(1)),
       })
 
-      // Update hit_count and last_used_at in background (don't await)
+      // Update hit_count and last_used_at in background
       supabase
         .from('nutrition_cache')
         .update({ hit_count: hit.hit_count + 1, last_used_at: new Date().toISOString() })
@@ -90,20 +139,25 @@ export async function lookupCache(items) {
 export async function saveToCache(items) {
   if (!items || items.length === 0) return
 
-  const rows = items.map(item => ({
-    food_name_normalized: normalize(item.name),
-    serving_size: (item.serving_size || '').trim(),
-    calories: item.calories || 0,
-    protein_g: item.protein_g || 0,
-    carbs_g: item.carbs_g || 0,
-    fat_g: item.fat_g || 0,
-    fiber_g: item.fiber_g || 0,
-    sugar_g: item.sugar_g || 0,
-  }))
+  const rows = items.map(item => {
+    const grams = parseGrams(item.serving_size)
+    return {
+      food_name_normalized: normalize(item.name),
+      serving_size: (item.serving_size || '').trim(),
+      serving_size_original: (item.serving_size || '').trim(),
+      reference_grams: grams,
+      calories: item.calories || 0,
+      protein_g: item.protein_g || 0,
+      carbs_g: item.carbs_g || 0,
+      fat_g: item.fat_g || 0,
+      fiber_g: item.fiber_g || 0,
+      sugar_g: item.sugar_g || 0,
+    }
+  })
 
   const { error } = await supabase
     .from('nutrition_cache')
-    .upsert(rows, { onConflict: 'food_name_normalized,serving_size' })
+    .upsert(rows, { onConflict: 'food_name_normalized' })
 
   if (error) {
     console.error('[NutritionCache] Save error:', error.message)
