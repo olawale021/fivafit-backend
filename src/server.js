@@ -32,6 +32,7 @@ import liveActivityRoutes from './routes/liveActivity.js'
 import nutritionRoutes from './routes/nutrition.js'
 import subscriptionRoutes from './routes/subscription.js'
 import adminRoutes from './routes/admin.js'
+import runsRoutes from './routes/runs.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -164,6 +165,7 @@ app.use('/api/live-activity', liveActivityRoutes)
 app.use('/api/nutrition', nutritionRoutes)
 app.use('/api/subscription', subscriptionRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/runs', runsRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {

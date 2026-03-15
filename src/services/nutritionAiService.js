@@ -1,5 +1,9 @@
+import { createHash } from 'crypto'
 import OpenAI from 'openai'
+import { supabase } from '../config/supabase.js'
 import { lookupCache, saveToCache } from './nutritionCacheService.js'
+
+const PHOTO_CACHE_MAX_AGE_DAYS = 30
 
 // OpenAI GPT-4o for food identification from images (handles base64 directly)
 const openai = new OpenAI({
@@ -100,8 +104,15 @@ COOKING METHOD RULES:
 - Air-fried food looks dry and crispy with minimal oil — do NOT call it "fried" or "deep-fried"
 - Roasted food has dry browning — do NOT call it "fried"
 
-OTHER RULES:
+NAMING CONSISTENCY (CRITICAL for caching — same food must always get the same name):
+- Use the SIMPLEST, most common name for each food. Do NOT add extra descriptors that vary between scans.
+- ALWAYS use singular form: "boiled egg" not "boiled eggs", "carrot" not "carrots"
+- Format: "[cooking method] [food name]" — e.g., "boiled egg", "grilled beef", "steamed rice"
+- For pasta/noodle dishes: name the dish itself, e.g., "spaghetti", "pad thai", "jollof rice" — do NOT append variable descriptions like "with tomato sauce" or "with mixed vegetables" unless the sauce/topping is the defining characteristic of the dish
+- List visible vegetables, proteins, and sides as SEPARATE items — do NOT bundle them into the main dish name
 - For dishes with cultural origins, use the proper name (e.g., "egusi soup", "jollof rice", "pad thai")
+
+OTHER RULES:
 - Estimate realistic portion sizes with weight in grams using plate/bowl as reference
 - Return ONLY the JSON object`
           }
@@ -109,6 +120,7 @@ OTHER RULES:
       }
     ],
     temperature: 0,
+    seed: 42,
     max_tokens: 1000
   })
 
@@ -233,13 +245,65 @@ Strict rules:
 }
 
 /**
+ * Look up a cached photo analysis result by image hash
+ */
+async function lookupPhotoCache(imageHash) {
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - PHOTO_CACHE_MAX_AGE_DAYS)
+
+  const { data, error } = await supabase
+    .from('photo_analysis_cache')
+    .select('*')
+    .eq('image_hash', imageHash)
+    .gt('last_used_at', cutoff.toISOString())
+    .single()
+
+  if (error || !data) return null
+
+  // Update hit_count in background
+  supabase
+    .from('photo_analysis_cache')
+    .update({ hit_count: data.hit_count + 1, last_used_at: new Date().toISOString() })
+    .eq('id', data.id)
+    .then(() => {})
+    .catch(() => {})
+
+  return data.result
+}
+
+/**
+ * Save a photo analysis result to cache
+ */
+async function savePhotoCache(imageHash, result) {
+  const { error } = await supabase
+    .from('photo_analysis_cache')
+    .upsert({ image_hash: imageHash, result }, { onConflict: 'image_hash' })
+
+  if (error) {
+    console.error('[PhotoCache] Save error:', error.message)
+  } else {
+    console.log('[PhotoCache] Saved analysis result to cache')
+  }
+}
+
+/**
  * Analyze a food photo: OpenAI identifies → Perplexity gets nutrition
+ * Results are cached by image hash — same photo always returns identical values
  * @param {Buffer} imageBuffer - Raw image data
  * @param {string} mimeType - e.g. 'image/jpeg'
  * @returns {object} - { is_food, items, meal_description, ai_raw }
  */
 export async function analyzeFoodPhoto(imageBuffer, mimeType) {
   try {
+    // Check photo-level cache first (same image = same result, always)
+    const imageHash = createHash('sha256').update(imageBuffer).digest('hex')
+    const cachedResult = await lookupPhotoCache(imageHash)
+
+    if (cachedResult) {
+      console.log(`📸 [PhotoCache] Cache hit — returning identical result (hash: ${imageHash.substring(0, 12)}...)`)
+      return cachedResult
+    }
+
     // Step 1: OpenAI identifies food from image
     const identification = await identifyFoodFromImage(imageBuffer, mimeType)
 
@@ -253,7 +317,7 @@ export async function analyzeFoodPhoto(imageBuffer, mimeType) {
 
     console.log(`✅ OpenAI identified ${identification.items.length} food items`)
 
-    // Step 2: Perplexity gets accurate nutrition data
+    // Step 2: Perplexity gets accurate nutrition data (with per-item cache)
     const nutritionItems = await getNutritionData(identification.items)
 
     // Merge: keep category from OpenAI, nutrition from Perplexity
@@ -272,12 +336,20 @@ export async function analyzeFoodPhoto(imageBuffer, mimeType) {
       }
     })
 
-    return {
+    const result = {
       is_food: true,
       items: mergedItems,
       meal_description: identification.meal_description || '',
       ai_raw: { openai: identification, perplexity: { items: nutritionItems } }
     }
+
+    // Save to photo cache in background (same photo = same result next time)
+    savePhotoCache(imageHash, result).catch(() => {})
+
+    // Also save individual items to nutrition cache (for text lookups & different photos with same foods)
+    // This is already handled inside getNutritionData → saveToCache
+
+    return result
   } catch (error) {
     console.error('❌ Food photo analysis error:', error)
     return { is_food: false, items: [], error: 'Failed to analyze food photo' }

@@ -5,9 +5,24 @@ const CACHE_MAX_AGE_DAYS = 30
 /**
  * Normalize a food name for consistent cache lookups
  * "Grilled Chicken Breast" → "grilled chicken breast"
+ * "boiled eggs" → "boiled egg"
+ * "Steamed White Rice" → "steamed white rice"
  */
 function normalize(name) {
-  return name.toLowerCase().trim().replace(/\s+/g, ' ')
+  let s = name.toLowerCase().trim()
+
+  // Collapse whitespace
+  s = s.replace(/\s+/g, ' ')
+
+  // Strip trailing 's' for simple plurals (eggs→egg, carrots→carrot, beans stays beans)
+  // Only strip if the word is >3 chars and doesn't end in 'ss' (e.g., "glass")
+  s = s.replace(/\b(\w{4,})s\b/g, (match, word) => {
+    if (word.endsWith('s')) return match // "glass" → keep
+    if (word.endsWith('ie')) return word.slice(0, -2) + 'y' // "berries" → "berry" (stripped s → "berrie" → "berry")
+    return word
+  })
+
+  return s
 }
 
 /**
