@@ -23,6 +23,7 @@ export const saveRun = async (userId, runData) => {
       elevation_gain_m,
       route_polyline,
       splits,
+      steps,
       notes,
     } = runData
 
@@ -40,6 +41,7 @@ export const saveRun = async (userId, runData) => {
         avg_speed_ms,
         max_speed_ms,
         elevation_gain_m,
+        steps,
         route_polyline,
         splits,
         notes,
