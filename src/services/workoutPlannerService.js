@@ -2,6 +2,7 @@ import { supabase } from '../config/supabase.js';
 import * as aiService from './aiService.js';
 import * as exerciseService from './exerciseService.js';
 import * as userService from './userService.js';
+import { notifyMutualFollowersActivityCompleted } from './notificationService.js';
 
 // ============================================================================
 // MAIN WORKFLOW: AI WORKOUT PLAN GENERATION
@@ -1394,6 +1395,13 @@ export async function completeWorkout({
 
     // Business Logic: Update plan completion stats
     await updatePlanCompletionStats(dailyWorkout.workout_plan_id);
+
+    // Notify mutual followers about workout completion (non-blocking)
+    notifyMutualFollowersActivityCompleted(userId, {
+      type: 'workout',
+      name: dailyWorkout.workout_name,
+      duration_minutes,
+    }).catch(err => console.error('❌ Failed to notify followers:', err))
 
     return completion;
   } catch (error) {

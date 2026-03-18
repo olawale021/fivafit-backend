@@ -814,3 +814,154 @@ export const createRecoveryReminderNotification = async (userId, recoveryData) =
     return null
   }
 }
+
+/**
+ * Get mutual followers for a user (people who follow each other)
+ * @param {string} userId - User ID
+ * @returns {Promise<string[]>} Array of mutual follower user IDs
+ */
+export const getMutualFollowers = async (userId) => {
+  try {
+    // Find users where: userId follows them AND they follow userId
+    const { data, error } = await supabase
+      .from('user_follows')
+      .select('following_id')
+      .eq('follower_id', userId)
+
+    if (error || !data || data.length === 0) return []
+
+    const followingIds = data.map(f => f.following_id)
+
+    // Now check which of those also follow the user back
+    const { data: mutuals, error: mutualError } = await supabase
+      .from('user_follows')
+      .select('follower_id')
+      .eq('following_id', userId)
+      .in('follower_id', followingIds)
+
+    if (mutualError || !mutuals) return []
+
+    return mutuals.map(m => m.follower_id)
+  } catch (error) {
+    console.error('❌ Get mutual followers error:', error)
+    return []
+  }
+}
+
+/**
+ * Notify mutual followers when a user completes an activity (workout, run, or walk)
+ * @param {string} userId - User who completed the activity
+ * @param {Object} activityData - Activity details
+ * @param {string} activityData.type - 'workout' | 'run' | 'walk'
+ * @param {string} activityData.name - Activity name (e.g. "Upper Body", "Run", "Walk")
+ * @param {number} [activityData.duration_minutes] - Duration in minutes
+ * @param {number} [activityData.distance] - Distance in meters (for runs/walks)
+ * @param {number} [activityData.steps] - Steps (for runs/walks)
+ * @returns {Promise<number>} Number of notifications sent
+ */
+export const notifyMutualFollowersActivityCompleted = async (userId, activityData) => {
+  try {
+    const mutualFollowerIds = await getMutualFollowers(userId)
+
+    if (mutualFollowerIds.length === 0) {
+      console.log(`📬 No mutual followers to notify for user ${userId}`)
+      return 0
+    }
+
+    // Get actor's name for the notification
+    const { data: actor } = await supabase
+      .from('users')
+      .select('username, full_name')
+      .eq('id', userId)
+      .single()
+
+    const actorName = actor?.full_name || actor?.username || 'Someone'
+
+    // Build notification body based on activity type
+    let body = ''
+    let title = ''
+
+    if (activityData.type === 'run' || activityData.type === 'walk') {
+      const label = activityData.type === 'walk' ? 'walk' : 'run'
+      const distanceKm = activityData.distance
+        ? (activityData.distance / 1000).toFixed(2)
+        : null
+
+      title = `${actorName} completed a ${label}`
+      body = distanceKm
+        ? `${distanceKm} km in ${activityData.duration_minutes || 0} min`
+        : `${activityData.duration_minutes || 0} min ${label}`
+    } else {
+      title = `${actorName} completed a workout`
+      body = activityData.name || 'Workout completed'
+      if (activityData.duration_minutes) {
+        body += ` · ${activityData.duration_minutes} min`
+      }
+    }
+
+    console.log(`📬 Notifying ${mutualFollowerIds.length} mutual followers about ${activityData.type} completion`)
+
+    let sentCount = 0
+
+    for (const followerId of mutualFollowerIds) {
+      try {
+        // Create in-app notification
+        const { data: notification, error } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: followerId,
+            actor_id: userId,
+            type: 'activity_completed',
+            notification_category: 'social',
+            metadata: {
+              activity_type: activityData.type,
+              activity_name: activityData.name,
+              duration_minutes: activityData.duration_minutes,
+              distance: activityData.distance,
+              steps: activityData.steps,
+            }
+          })
+          .select()
+          .single()
+
+        if (error) {
+          console.error(`❌ Failed to create notification for follower ${followerId}:`, error)
+          continue
+        }
+
+        // Send push notification
+        await sendPushNotification(followerId, {
+          title,
+          body,
+          data: {
+            type: 'activity_completed',
+            actorId: userId,
+            activityType: activityData.type,
+            screen: 'profile',
+            notificationId: notification.id
+          },
+          channelId: 'social-notifications'
+        })
+
+        await supabase
+          .from('notifications')
+          .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+          .eq('id', notification.id)
+
+        await supabase.rpc('increment_unread_notifications', {
+          user_id_param: followerId
+        })
+
+        sentCount++
+      } catch (err) {
+        console.error(`❌ Failed to notify follower ${followerId}:`, err)
+      }
+    }
+
+    console.log(`✅ Notified ${sentCount}/${mutualFollowerIds.length} mutual followers`)
+    return sentCount
+  } catch (error) {
+    console.error('❌ Notify mutual followers error:', error)
+    return 0
+  }
+}

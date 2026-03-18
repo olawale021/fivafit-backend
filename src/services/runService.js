@@ -1,4 +1,5 @@
 import { supabase } from '../config/supabase.js'
+import { notifyMutualFollowersActivityCompleted } from './notificationService.js'
 
 /**
  * Save a completed run
@@ -24,6 +25,7 @@ export const saveRun = async (userId, runData) => {
       route_polyline,
       splits,
       steps,
+      activity_type,
       notes,
     } = runData
 
@@ -42,6 +44,7 @@ export const saveRun = async (userId, runData) => {
         max_speed_ms,
         elevation_gain_m,
         steps,
+        activity_type: activity_type || 'run',
         route_polyline,
         splits,
         notes,
@@ -56,6 +59,16 @@ export const saveRun = async (userId, runData) => {
 
     // Check for personal bests
     const personalBests = await checkPersonalBests(userId, run)
+
+    // Notify mutual followers about run/walk completion (non-blocking)
+    const type = activity_type || 'run'
+    notifyMutualFollowersActivityCompleted(userId, {
+      type,
+      name: type === 'walk' ? 'Walk' : 'Run',
+      duration_minutes: Math.round(duration_seconds / 60),
+      distance: distance_meters,
+      steps,
+    }).catch(err => console.error('❌ Failed to notify followers:', err))
 
     console.log(`✅ Run saved: ${run.id} (${(distance_meters / 1000).toFixed(2)} km)`)
     return { run, personalBests }
