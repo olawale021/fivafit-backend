@@ -33,6 +33,9 @@ import nutritionRoutes from './routes/nutrition.js'
 import subscriptionRoutes from './routes/subscription.js'
 import adminRoutes from './routes/admin.js'
 import runsRoutes from './routes/runs.js'
+import weatherRoutes from './routes/weather.js'
+import ttsRoutes from './routes/tts.js'
+import guidedRunRoutes from './routes/guidedRun.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -166,6 +169,9 @@ app.use('/api/nutrition', nutritionRoutes)
 app.use('/api/subscription', subscriptionRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/runs', runsRoutes)
+app.use('/api/weather', weatherRoutes)
+app.use('/api/tts', ttsRoutes)
+app.use('/api/guided-run', guidedRunRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
