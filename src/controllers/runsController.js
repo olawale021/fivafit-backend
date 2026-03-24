@@ -69,6 +69,31 @@ export const getRuns = async (req, res) => {
 }
 
 /**
+ * GET /api/runs/user/:userId - Get a specific user's runs (public)
+ */
+export const getUserRuns = async (req, res) => {
+  try {
+    const { userId } = req.params
+    const page = parseInt(req.query.page) || 1
+    const limit = parseInt(req.query.limit) || 10
+
+    const result = await getRunHistory(userId, page, limit)
+
+    res.json({
+      success: true,
+      data: result.runs,
+      pagination: result.pagination,
+    })
+  } catch (error) {
+    console.error('❌ Get user runs error:', error?.message || error?.code || error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch user runs',
+    })
+  }
+}
+
+/**
  * GET /api/runs/stats - Get aggregate running stats
  */
 export const stats = async (req, res) => {
