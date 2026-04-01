@@ -5,7 +5,18 @@ import { requirePremium } from '../middleware/premiumAuth.js';
 
 const router = express.Router();
 
-// All routes require authentication
+// ============================================================================
+// PUBLIC ROUTES (no auth required)
+// ============================================================================
+
+/**
+ * POST /api/workout-planner/generate-onboarding
+ * Generate a plan during onboarding (before user has an account).
+ * Uses a temp_id that gets claimed after login.
+ */
+router.post('/generate-onboarding', workoutPlannerController.generateOnboardingPlan);
+
+// All remaining routes require authentication
 router.use(authenticateToken);
 
 // ============================================================================
@@ -25,6 +36,19 @@ router.use(authenticateToken);
  * }
  */
 router.post('/generate', requirePremium, workoutPlannerController.generateWorkoutPlan);
+
+/**
+ * POST /api/workout-planner/generate-first-plan
+ * Generate the first plan for a new user from onboarding (no premium required).
+ * Only works if user has zero existing plans.
+ */
+router.post('/generate-first-plan', workoutPlannerController.generateFirstPlan);
+
+/**
+ * POST /api/workout-planner/claim-onboarding-plan
+ * Claim an onboarding plan — reassign from temp placeholder to real user.
+ */
+router.post('/claim-onboarding-plan', workoutPlannerController.claimOnboardingPlan);
 
 /**
  * POST /api/workout-planner/generate-preview

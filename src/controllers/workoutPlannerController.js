@@ -1,9 +1,158 @@
 import * as workoutPlannerService from '../services/workoutPlannerService.js';
 import generationJobService from '../services/generationJobService.js';
+import { supabase } from '../config/supabase.js';
 
 // ============================================================================
 // WORKOUT PLAN GENERATION
 // ============================================================================
+
+/**
+ * Generate the first plan for a new user (no premium required).
+ * Only works if user has zero existing plans — prevents abuse.
+ */
+export async function generateFirstPlan(req, res) {
+  try {
+    const userId = req.user.id;
+    const {
+      fitness_goals,
+      target_body_parts,
+      days_per_week,
+      hours_per_session,
+      selected_days
+    } = req.body;
+
+    // Check user has NEVER had a plan (not just currently 0 — count all including deleted)
+    const { count } = await supabase
+      .from('workout_plans')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (count && count > 0) {
+      return res.status(403).json({ error: 'Free plan already used. Upgrade to premium to generate more plans.' });
+    }
+
+    if (!fitness_goals?.length) return res.status(400).json({ error: 'fitness_goals is required' });
+    if (!target_body_parts?.length) return res.status(400).json({ error: 'target_body_parts is required' });
+
+    console.log(`🤖 Generating first plan for new user ${userId}...`);
+
+    const plan = await workoutPlannerService.generateWeeklyPlan({
+      userId,
+      fitness_goals,
+      target_body_parts,
+      days_per_week: days_per_week || 3,
+      hours_per_session: hours_per_session || 1,
+      selected_days
+    });
+
+    console.log(`✅ First plan generated: ${plan.plan_name}`);
+
+    res.status(201).json({ success: true, data: plan });
+  } catch (error) {
+    console.error('Error generating first plan:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate plan' });
+  }
+}
+
+/**
+ * Generate a workout plan for onboarding (no auth required).
+ * Creates a plan with a temp_id. After login, claim it with /claim-onboarding-plan.
+ */
+export async function generateOnboardingPlan(req, res) {
+  try {
+    const {
+      temp_id,
+      fitness_goals,
+      target_body_parts,
+      fitness_levels,
+      days_per_week,
+      hours_per_session,
+      selected_days,
+      selected_dates,
+      // Profile data passed directly (user doesn't exist yet)
+      gender,
+      age,
+      weight_kg,
+      height_cm,
+    } = req.body;
+
+    if (!temp_id) return res.status(400).json({ error: 'temp_id is required' });
+    if (!fitness_goals?.length) return res.status(400).json({ error: 'fitness_goals is required' });
+    if (!target_body_parts?.length) return res.status(400).json({ error: 'target_body_parts is required' });
+
+    console.log(`🤖 Generating onboarding plan (temp: ${temp_id})...`);
+
+    // Use the temp_id itself as user_id — it's already a valid UUID
+    // Will be reassigned to real user_id after login via claim endpoint
+    const plan = await workoutPlannerService.generateWeeklyPlan({
+      userId: temp_id,
+      fitness_goals,
+      target_body_parts,
+      fitness_levels: fitness_levels || ['beginner'],
+      days_per_week: days_per_week || 3,
+      hours_per_session: hours_per_session || 1,
+      selected_days,
+      selected_dates,
+      // Override user profile lookup with passed data
+      userProfileOverride: {
+        gender: gender || 'not specified',
+        age: age || 25,
+        weight_kg: weight_kg || 70,
+        height_cm: height_cm || 170,
+      },
+    });
+
+    console.log(`✅ Onboarding plan generated: ${plan.plan_name} (temp: ${temp_id})`);
+
+    res.status(201).json({
+      success: true,
+      data: { plan_id: plan.id, temp_id, plan_name: plan.plan_name },
+    });
+  } catch (error) {
+    console.error('Error generating onboarding plan:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate onboarding plan' });
+  }
+}
+
+/**
+ * Claim an onboarding plan — reassign from temp placeholder to real user.
+ * Called after login.
+ */
+export async function claimOnboardingPlan(req, res) {
+  try {
+    const userId = req.user.id;
+    const { temp_id } = req.body;
+
+    if (!temp_id) return res.status(400).json({ error: 'temp_id is required' });
+
+    // temp_id was used as user_id when generating — now reassign to real user
+    const { data, error } = await supabase
+      .from('workout_plans')
+      .update({ user_id: userId, is_active: true })
+      .eq('user_id', temp_id)
+      .select('id, plan_name')
+      .single();
+
+    if (error) {
+      console.error('Error claiming onboarding plan:', error);
+      // Not critical — user can create a plan manually
+      return res.status(404).json({ error: 'Onboarding plan not found or already claimed' });
+    }
+
+    // Also update daily_workouts user references
+    await supabase
+      .from('daily_workouts')
+      .update({ user_id: userId })
+      .eq('workout_plan_id', data.id);
+
+    console.log(`✅ Onboarding plan claimed: ${data.plan_name} → user ${userId}`);
+
+    res.json({ success: true, data: { plan_id: data.id, plan_name: data.plan_name } });
+  } catch (error) {
+    console.error('Error claiming onboarding plan:', error);
+    res.status(500).json({ error: 'Failed to claim plan' });
+  }
+}
 
 /**
  * Generate a new AI-powered workout plan

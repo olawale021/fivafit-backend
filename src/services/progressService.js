@@ -1,6 +1,7 @@
 import { supabase } from '../config/supabase.js'
 import { getUserScanStats } from './scanHistoryService.js'
 import { getUserWorkoutStats, getWorkoutHistory } from './workoutPlannerService.js'
+import { getRunHistory } from './runService.js'
 
 /**
  * Progress Service
@@ -148,16 +149,88 @@ function calculateAchievements(scanStats, workoutStats, streak) {
 }
 
 /**
+ * Get nutrition stats for a user (last 7 and 30 days)
+ */
+async function getNutritionStats(userId) {
+  try {
+    const now = new Date()
+    const sevenDaysAgo = new Date(now)
+    sevenDaysAgo.setDate(now.getDate() - 7)
+    const thirtyDaysAgo = new Date(now)
+    thirtyDaysAgo.setDate(now.getDate() - 30)
+
+    const { data, error } = await supabase
+      .from('food_logs')
+      .select('id, calories, protein, carbs, fat, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', thirtyDaysAgo.toISOString())
+      .order('created_at', { ascending: false })
+
+    if (error || !data) return { totalMeals: 0, mealsThisWeek: 0, avgCalories: 0, totalCalories30d: 0 }
+
+    const mealsThisWeek = data.filter(m => new Date(m.created_at) >= sevenDaysAgo).length
+    const totalCalories = data.reduce((sum, m) => sum + (m.calories || 0), 0)
+    const avgCalories = data.length > 0 ? Math.round(totalCalories / Math.min(data.length, 30)) : 0
+
+    return {
+      totalMeals: data.length,
+      mealsThisWeek,
+      avgCalories,
+      totalCalories30d: Math.round(totalCalories),
+    }
+  } catch (error) {
+    console.error('Error getting nutrition stats:', error)
+    return { totalMeals: 0, mealsThisWeek: 0, avgCalories: 0, totalCalories30d: 0 }
+  }
+}
+
+/**
+ * Get running stats for a user
+ */
+async function getRunStats(userId) {
+  try {
+    const { data, error } = await supabase
+      .from('runs')
+      .select('id, distance_meters, duration_seconds, average_pace, calories_burned, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+
+    if (error || !data) return { totalRuns: 0, totalDistance: 0, totalDuration: 0, totalCaloriesBurned: 0, bestPace: null }
+
+    const totalDistance = data.reduce((sum, r) => sum + (Number(r.distance_meters) || 0), 0)
+    const totalDuration = data.reduce((sum, r) => sum + (Number(r.duration_seconds) || 0), 0)
+    const totalCaloriesBurned = data.reduce((sum, r) => sum + (Number(r.calories_burned) || 0), 0)
+    const paces = data.filter(r => r.average_pace && Number(r.average_pace) > 0).map(r => Number(r.average_pace))
+    const bestPace = paces.length > 0 ? Math.min(...paces) : null
+    const distanceKm = totalDistance > 0 ? Math.round(totalDistance / 100) / 10 : 0
+
+    return {
+      totalRuns: data.length,
+      totalDistance: Math.round(totalDistance) || 0,
+      totalDistanceKm: distanceKm,
+      totalDuration: Math.round(totalDuration),
+      totalCaloriesBurned: Math.round(totalCaloriesBurned),
+      bestPace,
+    }
+  } catch (error) {
+    console.error('Error getting run stats:', error)
+    return { totalRuns: 0, totalDistance: 0, totalDistanceKm: 0, totalDuration: 0, totalCaloriesBurned: 0, bestPace: null }
+  }
+}
+
+/**
  * Get comprehensive progress data for user
  */
 export async function getUserProgress(userId) {
   try {
-    // Fetch all data in parallel
-    const [scanStats, workoutStats, recentActivity, streak] = await Promise.all([
+    // Fetch all data in parallel — including nutrition and runs
+    const [scanStats, workoutStats, recentActivity, streak, nutritionStats, runStats] = await Promise.all([
       getUserScanStats(userId),
       getUserWorkoutStats(userId),
       getWorkoutHistory(userId, 10, 0),
-      calculateWorkoutStreak(userId)
+      calculateWorkoutStreak(userId),
+      getNutritionStats(userId),
+      getRunStats(userId),
     ])
 
     // Calculate achievements
@@ -200,18 +273,117 @@ export async function getUserProgress(userId) {
       energyLevel: activity.energy_level
     }))
 
+    // Nutrition stats for display
+    const nutritionDisplay = {
+      totalMeals: {
+        label: 'Meals Logged',
+        value: nutritionStats.totalMeals,
+        icon: 'fork.knife'
+      },
+      mealsThisWeek: {
+        label: 'This Week',
+        value: nutritionStats.mealsThisWeek,
+        icon: 'calendar'
+      },
+      avgCalories: {
+        label: 'Avg Calories',
+        value: nutritionStats.avgCalories,
+        icon: 'flame.fill'
+      }
+    }
+
+    // Run stats for display
+    const runDisplay = {
+      totalRuns: {
+        label: 'Total Runs',
+        value: runStats.totalRuns,
+        icon: 'figure.run'
+      },
+      totalDistance: {
+        label: 'Distance',
+        value: `${runStats.totalDistanceKm || 0} km`,
+        icon: 'map.fill'
+      },
+      totalCaloriesBurned: {
+        label: 'Calories Burned',
+        value: runStats.totalCaloriesBurned,
+        icon: 'flame.fill'
+      },
+      bestPace: {
+        label: 'Best Pace',
+        value: runStats.bestPace ? `${Math.floor(runStats.bestPace / 60)}:${String(Math.round(runStats.bestPace % 60)).padStart(2, '0')} /km` : '--',
+        icon: 'bolt.fill'
+      }
+    }
+
+    // Add nutrition and run achievements
+    const allAchievements = [
+      ...achievements,
+      {
+        id: 'first_meal',
+        title: 'First Meal Logged',
+        description: 'Logged your first meal',
+        unlocked: nutritionStats.totalMeals >= 1,
+        progress: Math.min(nutritionStats.totalMeals, 1),
+        target: 1,
+        icon: 'fork.knife'
+      },
+      {
+        id: 'meal_50',
+        title: '50 Meals',
+        description: 'Logged 50 meals',
+        unlocked: nutritionStats.totalMeals >= 50,
+        progress: Math.min(nutritionStats.totalMeals, 50),
+        target: 50,
+        icon: 'fork.knife'
+      },
+      {
+        id: 'first_run',
+        title: 'First Run',
+        description: 'Completed your first run',
+        unlocked: runStats.totalRuns >= 1,
+        progress: Math.min(runStats.totalRuns, 1),
+        target: 1,
+        icon: 'figure.run'
+      },
+      {
+        id: 'run_10k',
+        title: '10K Total',
+        description: 'Ran a total of 10 km',
+        unlocked: runStats.totalDistanceKm >= 10,
+        progress: Math.min(Math.round(runStats.totalDistanceKm), 10),
+        target: 10,
+        icon: 'map.fill'
+      },
+      {
+        id: 'run_50k',
+        title: '50K Total',
+        description: 'Ran a total of 50 km',
+        unlocked: runStats.totalDistanceKm >= 50,
+        progress: Math.min(Math.round(runStats.totalDistanceKm), 50),
+        target: 50,
+        icon: 'trophy.fill'
+      },
+    ]
+
     return {
       stats,
-      achievements,
+      nutritionStats: nutritionDisplay,
+      runStats: runDisplay,
+      achievements: allAchievements,
       recentActivity: recentActivityFormatted,
       streak,
       summary: {
         totalScans: scanStats?.totalScans || 0,
         totalWorkouts: workoutStats?.total_workouts_completed || 0,
-        totalAchievements: achievements.length,
-        unlockedAchievements: achievements.filter(a => a.unlocked).length,
+        totalMeals: nutritionStats.totalMeals,
+        totalRuns: runStats.totalRuns,
+        totalDistanceKm: runStats.totalDistanceKm,
+        totalAchievements: allAchievements.length,
+        unlockedAchievements: allAchievements.filter(a => a.unlocked).length,
         scansThisWeek: scanStats?.scansThisWeek || 0,
         workoutsThisWeek: workoutStats?.recent_workouts_7_days || 0,
+        mealsThisWeek: nutritionStats.mealsThisWeek,
         currentStreak: streak,
         favoriteEquipmentCategory: scanStats?.favoriteCategory || null
       }

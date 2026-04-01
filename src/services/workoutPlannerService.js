@@ -27,33 +27,43 @@ export async function generateWeeklyPlan({
   hours_per_session,
   selected_days,
   selected_dates,
-  start_date
+  start_date,
+  fitness_levels: passedFitnessLevels,
+  userProfileOverride,
 }) {
   try {
-    console.log(`📋 Step 1: Fetching user profile for ${userId}...`);
+    let userProfile;
+    let fitnessLevel;
 
-    // Get user profile data
-    const user = await userService.findUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
+    if (userProfileOverride) {
+      // Onboarding flow — profile data passed directly, no DB lookup
+      console.log(`📋 Step 1: Using provided profile data (onboarding)...`);
+      userProfile = userProfileOverride;
+      fitnessLevel = passedFitnessLevels?.[0] || 'beginner';
+    } else {
+      console.log(`📋 Step 1: Fetching user profile for ${userId}...`);
+
+      const user = await userService.findUserById(userId);
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      userProfile = {
+        gender: user.gender || 'not specified',
+        age: calculateAge(user.date_of_birth),
+        weight_kg: user.weight_kg,
+        height_cm: user.height_cm
+      };
+
+      const preferences = await getUserPreferences(userId);
+      fitnessLevel = preferences?.fitness_level || 'beginner';
     }
-
-    // Get user metadata (from users table or custom metadata)
-    const userProfile = {
-      gender: user.gender || 'not specified',
-      age: calculateAge(user.date_of_birth),
-      weight_kg: user.weight_kg,
-      height_cm: user.height_cm
-    };
-
-    // Get user preferences for fitness level
-    const preferences = await getUserPreferences(userId);
-    const fitnessLevel = preferences?.fitness_level || 'beginner';
 
     console.log(`💪 Step 2: Fetching relevant exercises from database...`);
 
     // Fetch exercises filtered by target body parts
-    const relevantExercises = await fetchExercisesForPlanner(target_body_parts, fitnessLevel);
+    const fitnessLevelsArray = Array.isArray(fitnessLevel) ? fitnessLevel : [fitnessLevel];
+    const relevantExercises = await fetchExercisesForPlanner(target_body_parts, fitnessLevelsArray);
 
     console.log(`📊 Found ${relevantExercises.length} relevant exercises`);
 
