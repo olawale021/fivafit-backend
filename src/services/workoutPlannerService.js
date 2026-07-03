@@ -3,6 +3,7 @@ import * as aiService from './aiService.js';
 import * as exerciseService from './exerciseService.js';
 import * as userService from './userService.js';
 import { notifyMutualFollowersActivityCompleted } from './notificationService.js';
+import { evaluateWorkoutChallenges, evaluateStreak } from './challengeCatalogService.js';
 
 // ============================================================================
 // MAIN WORKFLOW: AI WORKOUT PLAN GENERATION
@@ -1412,6 +1413,14 @@ export async function completeWorkout({
       name: dailyWorkout.workout_name,
       duration_minutes,
     }).catch(err => console.error('❌ Failed to notify followers:', err))
+
+    // Auto-evaluate curated challenges + streak (non-blocking)
+    evaluateWorkoutChallenges(userId, completion, dailyWorkout).catch(err =>
+      console.error('❌ evaluateWorkoutChallenges (post-save):', err)
+    )
+    evaluateStreak(userId, completion.completed_at || new Date()).catch(err =>
+      console.error('❌ evaluateStreak (post-save):', err)
+    )
 
     return completion;
   } catch (error) {

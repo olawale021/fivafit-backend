@@ -9,7 +9,12 @@ import {
   getGroupMembers,
   updateGroup,
   deleteGroup,
-  approveJoinRequest
+  approveJoinRequest,
+  listPublicGroups,
+  getGroupByInviteCode,
+  joinByInviteCode,
+  getGroupFeed as serviceGetGroupFeed,
+  getGroupLeaderboard as serviceGetGroupLeaderboard
 } from '../services/groupService.js'
 import { supabase } from '../config/supabase.js'
 
@@ -79,7 +84,7 @@ export const getGroup = async (req, res) => {
 export const create = async (req, res) => {
   try {
     const userId = req.user.id
-    const { name, description, avatar_url, privacy, join_type } = req.body
+    const { name, description, avatar_url, privacy, join_type, category } = req.body
 
     if (!name) {
       return res.status(400).json({
@@ -104,12 +109,21 @@ export const create = async (req, res) => {
       })
     }
 
+    // Validate category
+    if (category && !['general', 'steps', 'running', 'workouts', 'nutrition'].includes(category)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid category'
+      })
+    }
+
     const groupData = {
       name,
       description: description || null,
       avatar_url: avatar_url || null,
       privacy: privacy || 'private',
-      join_type: join_type || 'invite'
+      join_type: join_type || 'invite',
+      category: category || 'general'
     }
 
     const group = await createGroup(groupData, userId)
@@ -358,76 +372,18 @@ export const getMembers = async (req, res) => {
 }
 
 /**
- * Get group feed (posts from group members)
+ * Get group feed — category-aware (steps / running / workouts / nutrition / general)
  * GET /api/groups/:id/feed
  * Query params: limit, cursor
  */
 export const getGroupFeed = async (req, res) => {
   try {
     const { id } = req.params
-    const { limit = 20, cursor } = req.query
+    const { limit, cursor } = req.query
 
-    // Get group member IDs
-    const members = await getGroupMembers(id, 'active')
-    const memberIds = members.map(m => m.user.id)
+    const result = await serviceGetGroupFeed(id, { cursor, limit })
 
-    if (memberIds.length === 0) {
-      return res.json({
-        success: true,
-        data: {
-          posts: [],
-          nextCursor: null
-        }
-      })
-    }
-
-    // Fetch posts from group members
-    let query = supabase
-      .from('posts')
-      .select(`
-        *,
-        user:users (
-          id,
-          username,
-          full_name,
-          profile_photo_url
-        ),
-        workout_completion:workout_completions (
-          id,
-          duration_minutes,
-          calories_burned,
-          difficulty
-        ),
-        like_count,
-        comment_count,
-        save_count
-      `)
-      .in('user_id', memberIds)
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit) + 1)
-
-    if (cursor) {
-      query = query.lt('created_at', cursor)
-    }
-
-    const { data: posts, error } = await query
-
-    if (error) {
-      throw error
-    }
-
-    // Check if there are more posts
-    const hasMore = posts.length > parseInt(limit)
-    const postsToReturn = hasMore ? posts.slice(0, parseInt(limit)) : posts
-    const nextCursor = hasMore ? postsToReturn[postsToReturn.length - 1].created_at : null
-
-    res.json({
-      success: true,
-      data: {
-        posts: postsToReturn,
-        nextCursor
-      }
-    })
+    res.json({ success: true, data: result })
   } catch (error) {
     console.error('❌ Get group feed error:', error)
     res.status(500).json({
@@ -435,6 +391,86 @@ export const getGroupFeed = async (req, res) => {
       error: 'Failed to fetch group feed',
       message: error.message
     })
+  }
+}
+
+/**
+ * Browse public groups, optionally filtered by category.
+ * GET /api/groups/browse?category=steps&cursor=…
+ */
+export const browse = async (req, res) => {
+  try {
+    const { category, cursor } = req.query
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50)
+
+    const result = await listPublicGroups({ category, cursor, limit })
+
+    res.json({ success: true, data: result.groups, nextCursor: result.nextCursor })
+  } catch (error) {
+    console.error('❌ Browse groups error:', error)
+    res.status(500).json({ success: false, error: 'Failed to browse groups', message: error.message })
+  }
+}
+
+/**
+ * Preview a group by invite code (for the invite-link landing screen).
+ * GET /api/groups/by-code/:code
+ */
+export const getByCode = async (req, res) => {
+  try {
+    const { code } = req.params
+    const group = await getGroupByInviteCode(code)
+    if (!group) {
+      return res.status(404).json({ success: false, error: 'Invite code not found' })
+    }
+    // Also include the requesting user's existing membership if any
+    const { data: membership } = await supabase
+      .from('group_members')
+      .select('role, status')
+      .eq('group_id', group.id)
+      .eq('user_id', req.user.id)
+      .maybeSingle()
+    res.json({ success: true, data: { ...group, user_membership: membership || null } })
+  } catch (error) {
+    console.error('❌ getByCode error:', error)
+    res.status(500).json({ success: false, error: 'Failed to look up group', message: error.message })
+  }
+}
+
+/**
+ * Join (or request) a group via invite code.
+ * POST /api/groups/join-by-code/:code
+ */
+export const joinByCode = async (req, res) => {
+  try {
+    const { code } = req.params
+    const userId = req.user.id
+    const membership = await joinByInviteCode(code, userId)
+    const message = membership.status === 'active' ? 'Joined group' : 'Join request sent'
+    res.status(201).json({ success: true, data: membership, message })
+  } catch (error) {
+    console.error('❌ joinByCode error:', error)
+    const statusCode = error.message?.includes('not found') ? 404
+      : error.message?.includes('already') ? 409
+      : 500
+    res.status(statusCode).json({ success: false, error: error.message })
+  }
+}
+
+/**
+ * Category-aware leaderboard.
+ * GET /api/groups/:id/leaderboard?period=week|month|all
+ */
+export const getLeaderboard = async (req, res) => {
+  try {
+    const { id } = req.params
+    const { period } = req.query
+    const validPeriod = ['today', 'week', 'month', 'all'].includes(period) ? period : 'week'
+    const result = await serviceGetGroupLeaderboard(id, { period: validPeriod })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    console.error('❌ Get leaderboard error:', error)
+    res.status(500).json({ success: false, error: 'Failed to load leaderboard', message: error.message })
   }
 }
 
