@@ -465,6 +465,110 @@ export const createWorkoutCompletedNotification = async (userId, completionData)
   }
 }
 
+// Human labels + formatting for personal-record pushes
+const PR_LABELS = {
+  '400m': '400m',
+  '1km': '1K',
+  '1mi': 'Mile',
+  '5km': '5K',
+  '10km': '10K',
+  'half_marathon': 'Half Marathon',
+  'marathon': 'Marathon',
+}
+
+const formatPrTime = (seconds) => {
+  const s = Math.max(0, Math.round(seconds))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return `${m}:${String(sec).padStart(2, '0')}`
+}
+
+/**
+ * Create a personal-record notification for the runner themselves.
+ * Sends ONE combined notification per run even when multiple distances PR'd.
+ * @param {string} userId - User ID
+ * @param {Array} prs - New PBs from checkPersonalBests (each has distance_type,
+ *   time_seconds, pace_sec_km, previous_time_seconds, improvement_seconds)
+ * @param {string} runId - The run that set the record(s)
+ * @returns {Promise<Object|null>} Created notification
+ */
+export const createPersonalRecordNotification = async (userId, prs, runId) => {
+  if (!Array.isArray(prs) || prs.length === 0) return null
+  try {
+    console.log(`📬 Creating personal record notification for user ${userId} (${prs.length} PR(s))`)
+
+    const labels = prs.map((p) => PR_LABELS[p.distance_type] || p.distance_type)
+    const count = prs.length
+
+    let title
+    let body
+    if (count === 1) {
+      const p = prs[0]
+      const faster =
+        p.improvement_seconds && p.improvement_seconds > 0
+          ? ` — ${formatPrTime(p.improvement_seconds)} faster!`
+          : ''
+      title = '🏅 New Personal Record!'
+      body = `New ${labels[0]} best: ${formatPrTime(p.time_seconds)}${faster}`
+    } else {
+      title = `🏅 ${count} New Personal Records!`
+      body = `You set new bests in ${labels.join(', ')} on your last run 🔥`
+    }
+
+    const { data: notification, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: userId,
+        actor_id: null,
+        type: 'personal_record',
+        notification_category: 'workout',
+        metadata: {
+          run_id: runId,
+          records: prs.map((p) => ({
+            distance_type: p.distance_type,
+            time_seconds: p.time_seconds,
+            pace_sec_km: p.pace_sec_km,
+            previous_time_seconds: p.previous_time_seconds ?? null,
+            improvement_seconds: p.improvement_seconds ?? null,
+          })),
+        },
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    await sendPushNotification(userId, {
+      title,
+      body,
+      data: {
+        type: 'personal_record',
+        runId,
+        screen: 'run-achievements',
+        notificationId: notification.id,
+      },
+      channelId: 'workout-notifications',
+    })
+
+    await supabase
+      .from('notifications')
+      .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+      .eq('id', notification.id)
+
+    await supabase.rpc('increment_unread_notifications', {
+      user_id_param: userId,
+    })
+
+    console.log(`✅ Personal record notification created: ${notification.id}`)
+    return notification
+  } catch (error) {
+    console.error('❌ Create personal record notification error:', error)
+    return null
+  }
+}
+
 /**
  * Create weekly goal achieved notification
  * @param {string} userId - User ID

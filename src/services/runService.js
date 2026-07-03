@@ -1,5 +1,5 @@
 import { supabase } from '../config/supabase.js'
-import { notifyMutualFollowersActivityCompleted } from './notificationService.js'
+import { notifyMutualFollowersActivityCompleted, createPersonalRecordNotification } from './notificationService.js'
 import { evaluateRunChallenges, evaluateStreak } from './challengeCatalogService.js'
 
 /**
@@ -60,6 +60,13 @@ export const saveRun = async (userId, runData) => {
 
     // Check for personal bests
     const personalBests = await checkPersonalBests(userId, run)
+
+    // Notify the runner about any new PRs from this run (non-blocking)
+    if (personalBests && personalBests.length > 0) {
+      createPersonalRecordNotification(userId, personalBests, run.id).catch(err =>
+        console.error('❌ Failed to send PR notification:', err)
+      )
+    }
 
     // Notify mutual followers about run/walk completion (non-blocking)
     const type = activity_type || 'run'
