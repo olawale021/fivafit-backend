@@ -7,7 +7,9 @@ import {
   createWeeklyReportNotification,
   createInactiveAlertNotification,
   createRecoveryReminderNotification,
-  createRunningRecapNotification
+  createRunningRecapNotification,
+  createStepNudgeNotification,
+  createStepAffirmationNotification
 } from './notificationService.js';
 
 /**
@@ -640,6 +642,130 @@ export const scheduleWeeklyProgressReport = () => {
 };
 
 /**
+ * Step-goal pace check — timezone-aware, runs every 30 min.
+ *
+ * Each user gets pace-relative touches based on their daily_step_goal:
+ *  - Nudge (2pm–7pm local, on the hour): below 60% of the pace they'd need →
+ *    "you've got time" (once/day).
+ *  - Midday affirm (~3pm local): on pace and not yet finished → "great pace".
+ *  - Evening affirm (~10:30pm local): still on pace → "strong day".
+ * Finishing the goal is celebrated separately by goal_reached, so affirms skip
+ * anyone who already hit the goal today.
+ *
+ * Skipped when the app hasn't synced fresh step data today (we won't nudge on a
+ * stale/absent count).
+ */
+const STEP_ACTIVE_START = 8;      // 8am — assumed start of active day
+const STEP_ACTIVE_HOURS = 14;     // 8am–10pm
+const STEP_NUDGE_START = 14;      // 2pm
+const STEP_NUDGE_END = 19;        // 7pm (last nudge check)
+const STEP_MIDDAY_HOUR = 15;      // 3pm midday affirm
+const STEP_EVENING_HOUR = 22;     // 10:30pm evening affirm
+const STEP_EVENING_MINUTE = 30;
+const STEP_BEHIND_FACTOR = 0.6;
+const STEP_STALE_HOURS = 4;       // require step data synced within this many hours
+
+export const scheduleStepGoalPaceCheck = () => {
+  cron.schedule('0,30 * * * *', async () => {
+    try {
+      const { data: users, error } = await supabase
+        .from('notification_preferences')
+        .select('user_id, timezone')
+        .eq('step_nudge_enabled', true);
+
+      if (error) {
+        console.error('❌ Error fetching users for step pace check:', error);
+        return;
+      }
+      if (!users || users.length === 0) return;
+
+      const now = new Date();
+
+      for (const pref of users) {
+        try {
+          const tz = pref.timezone || 'UTC';
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+          }).formatToParts(now);
+          const localHour = Number(parts.find((p) => p.type === 'hour').value) % 24;
+          const localMinute = Number(parts.find((p) => p.type === 'minute').value);
+          const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now); // YYYY-MM-DD
+
+          const isNudgeTick = localMinute === 0 && localHour >= STEP_NUDGE_START && localHour <= STEP_NUDGE_END;
+          const isMiddayTick = localMinute === 0 && localHour === STEP_MIDDAY_HOUR;
+          const isEveningTick = localHour === STEP_EVENING_HOUR && localMinute === STEP_EVENING_MINUTE;
+          if (!isNudgeTick && !isMiddayTick && !isEveningTick) continue;
+
+          // Daily step goal
+          const { data: user } = await supabase
+            .from('users')
+            .select('daily_step_goal')
+            .eq('id', pref.user_id)
+            .single();
+          const goal = user?.daily_step_goal;
+          if (!goal || goal <= 0) continue;
+
+          // Today's steps (in the user's local date) + freshness guard
+          const { data: stepRow } = await supabase
+            .from('daily_steps')
+            .select('step_count, updated_at')
+            .eq('user_id', pref.user_id)
+            .eq('date', localDate)
+            .maybeSingle();
+          if (!stepRow) continue; // no synced data today — can't trust a nudge
+          const ageHours = (now.getTime() - new Date(stepRow.updated_at).getTime()) / 3600000;
+          if (ageHours > STEP_STALE_HOURS) continue;
+          const steps = stepRow.step_count || 0;
+
+          // Pace at this hour
+          const elapsed = Math.min(STEP_ACTIVE_HOURS, Math.max(0, localHour - STEP_ACTIVE_START));
+          const expected = goal * (elapsed / STEP_ACTIVE_HOURS);
+          const onPace = steps >= expected * STEP_BEHIND_FACTOR;
+
+          // Dedup helpers
+          const affirmSince = new Date(now.getTime() - 5 * 3600 * 1000).toISOString();
+          const daySince = new Date(now.getTime() - 14 * 3600 * 1000).toISOString();
+          const hasRecent = async (types, since) => {
+            const { data } = await supabase
+              .from('notifications')
+              .select('id')
+              .eq('user_id', pref.user_id)
+              .in('type', types)
+              .gte('created_at', since)
+              .limit(1);
+            return !!(data && data.length > 0);
+          };
+
+          if (isNudgeTick && !onPace) {
+            // Behind pace → nudge (once/day)
+            if (!(await hasRecent(['step_nudge'], daySince))) {
+              await createStepNudgeNotification(pref.user_id, steps, goal);
+            }
+          } else if (isMiddayTick && onPace && steps < goal) {
+            // ~3pm, on pace, not finished → midday affirm (skip if already touched)
+            if (!(await hasRecent(['step_affirmation', 'goal_reached'], affirmSince))) {
+              await createStepAffirmationNotification(pref.user_id, steps, goal, 'midday');
+            }
+          } else if (isEveningTick && onPace) {
+            // ~10:30pm wrap-up → evening affirm (goal_reached covers finishers)
+            if (!(await hasRecent(['step_affirmation'], affirmSince)) &&
+                !(await hasRecent(['goal_reached'], daySince))) {
+              await createStepAffirmationNotification(pref.user_id, steps, goal, 'evening');
+            }
+          }
+        } catch (err) {
+          console.error(`❌ Step pace check error for ${pref.user_id}:`, err);
+        }
+      }
+    } catch (error) {
+      console.error('❌ [Cron] Step goal pace check error:', error);
+    }
+  });
+
+  console.log('✅ Step goal pace check cron scheduled (every 30 min, timezone-aware)');
+};
+
+/**
  * Weekly Running Recap
  * Runs every Sunday at 7 PM — sends each user their past-7-day running summary
  * (runs, distance, new PRs). Reuses the weekly_report_enabled preference.
@@ -1022,6 +1148,7 @@ export const startCronJobs = (phase = 'phase1') => {
     console.log('📋 PHASE 3: Insights & Re-engagement');
     scheduleWeeklyProgressReport();
     scheduleWeeklyRunningRecap();
+    scheduleStepGoalPaceCheck();
     scheduleInactiveUserAlerts();
     scheduleRecoveryReminders();
     console.log('');

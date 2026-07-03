@@ -773,6 +773,74 @@ export const createRunningRecapNotification = async (userId, stats) => {
   }
 }
 
+// Shared insert + push for the two step-pace notifications
+const sendStepPaceNotification = async (userId, { type, title, body, steps, goal }) => {
+  try {
+    const { data: notification, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: userId,
+        actor_id: null,
+        type,
+        notification_category: 'workout',
+        metadata: { goal_type: 'daily_steps', target: goal, value: steps },
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    await sendPushNotification(userId, {
+      title,
+      body,
+      data: { type, goalType: 'daily_steps', screen: 'home', notificationId: notification.id },
+      channelId: 'workout-notifications',
+    })
+
+    await supabase
+      .from('notifications')
+      .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+      .eq('id', notification.id)
+
+    await supabase.rpc('increment_unread_notifications', { user_id_param: userId })
+
+    console.log(`✅ ${type} notification created: ${notification.id}`)
+    return notification
+  } catch (error) {
+    console.error(`❌ ${type} notification error:`, error)
+    return null
+  }
+}
+
+/**
+ * Nudge a user who has fallen behind their daily step pace (Phase 1).
+ */
+export const createStepNudgeNotification = (userId, steps, goal) =>
+  sendStepPaceNotification(userId, {
+    type: 'step_nudge',
+    title: '👟 Time to move',
+    body: `${steps.toLocaleString()} / ${goal.toLocaleString()} steps — a quick walk keeps your goal in reach!`,
+    steps,
+    goal,
+  })
+
+/**
+ * Affirm a user who is on pace for their step goal.
+ * @param {'midday'|'evening'} phase - midday (~3pm) or evening (~10pm) wrap-up
+ */
+export const createStepAffirmationNotification = (userId, steps, goal, phase = 'evening') => {
+  const midday = phase === 'midday'
+  return sendStepPaceNotification(userId, {
+    type: 'step_affirmation',
+    title: midday ? '🔥 Great pace!' : '👏 Strong day!',
+    body: midday
+      ? `${steps.toLocaleString()} steps already — you're on track. Keep it rolling!`
+      : `${steps.toLocaleString()} steps today — nice work staying on pace!`,
+    steps,
+    goal,
+  })
+}
+
 /**
  * Create weekly goal achieved notification
  * @param {string} userId - User ID
