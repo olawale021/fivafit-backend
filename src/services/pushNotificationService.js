@@ -97,39 +97,52 @@ export const sendPushNotification = async (userId, notificationData) => {
     }
 
     // Send push notifications
-    const tickets = await expo.sendPushNotificationsAsync(messages);
+    // Send each device in its OWN request. Expo rejects a whole request that
+    // mixes tokens from different Expo projects ("All push notification messages
+    // in the same request must be for the same project"), which would fail every
+    // device at once. Isolating each send means one stale/cross-project token
+    // can't block delivery to the user's valid device(s).
+    const tickets = [];
+    const receiptToTokenId = new Map();
 
-    console.log(`✅ Push notifications sent to ${tickets.length} device(s)`);
-
-    // Update last_used_at for successfully sent tokens and handle errors
-    const receiptIds = [];
-    for (let i = 0; i < tickets.length; i++) {
-      const ticket = tickets[i];
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
       const tokenId = tokenIds[i];
 
-      if (ticket.status === 'ok') {
-        console.log(`📋 Push ticket OK for user ${userId}, receipt: ${ticket.id}`);
-        if (ticket.id) receiptIds.push(ticket.id);
-        // Update last_used_at
-        await supabase
-          .from('push_tokens')
-          .update({ last_used_at: new Date().toISOString() })
-          .eq('id', tokenId);
-      } else if (ticket.status === 'error') {
-        console.error(`❌ Error in push ticket for user ${userId}:`, ticket.message, ticket.details);
+      try {
+        const [ticket] = await expo.sendPushNotificationsAsync([message]);
+        tickets.push(ticket);
 
-        // If token is invalid, mark as inactive
-        if (ticket.details?.error === 'DeviceNotRegistered') {
-          console.log(`🗑️  Marking token as inactive: ${tokenId}`);
+        if (ticket.status === 'ok') {
+          console.log(`📋 Push ticket OK for user ${userId}, receipt: ${ticket.id}`);
+          if (ticket.id) receiptToTokenId.set(ticket.id, tokenId);
           await supabase
             .from('push_tokens')
-            .update({ is_active: false })
+            .update({ last_used_at: new Date().toISOString() })
             .eq('id', tokenId);
+        } else if (ticket.status === 'error') {
+          console.error(`❌ Error in push ticket for user ${userId}:`, ticket.message, ticket.details);
+
+          // If token is invalid, mark as inactive
+          if (ticket.details?.error === 'DeviceNotRegistered') {
+            console.log(`🗑️  Marking token as inactive: ${tokenId}`);
+            await supabase
+              .from('push_tokens')
+              .update({ is_active: false })
+              .eq('id', tokenId);
+          }
         }
+      } catch (sendErr) {
+        // A single device failing (e.g. project mismatch) must not block the rest
+        console.error(`❌ Failed to send to token ${tokenId} for user ${userId}:`, sendErr.message);
       }
     }
 
-    // Check receipts after a delay to see if Apple actually delivered
+    console.log(`✅ Push notifications processed for ${messages.length} device(s)`);
+
+    // Check receipts after a delay to catch delivery failures (e.g. the device
+    // unregistered from APNs/FCM) and prune the dead token.
+    const receiptIds = [...receiptToTokenId.keys()];
     if (receiptIds.length > 0) {
       setTimeout(async () => {
         try {
@@ -141,9 +154,16 @@ export const sendPushNotification = async (userId, notificationData) => {
                 console.log(`✅ Receipt ${receiptId}: delivered successfully`);
               } else if (receipt.status === 'error') {
                 console.error(`❌ Receipt ${receiptId}: ${receipt.message} (${receipt.details?.error})`);
-                // If DeviceNotRegistered, find and deactivate the token
+                // If DeviceNotRegistered, deactivate the token that produced this receipt
                 if (receipt.details?.error === 'DeviceNotRegistered') {
-                  console.log(`🗑️  Token is invalid per receipt - marking inactive`);
+                  const badTokenId = receiptToTokenId.get(receiptId);
+                  if (badTokenId) {
+                    console.log(`🗑️  Deactivating token ${badTokenId} (DeviceNotRegistered per receipt)`);
+                    await supabase
+                      .from('push_tokens')
+                      .update({ is_active: false })
+                      .eq('id', badTokenId);
+                  }
                 }
               }
             }
@@ -285,6 +305,24 @@ export const updatePushToken = async (userId, pushToken, deviceInfo = {}) => {
         console.error(`❌ Error removing push token from other users:`, removeError);
       } else {
         console.log(`✅ Push token removed from other users`);
+      }
+    }
+
+    // Deactivate this user's OTHER tokens on the SAME physical device. A rebuild
+    // or reinstall rotates the Expo token (and can move it to a different Expo
+    // project); leaving the old one active accumulates stale tokens and — across
+    // projects — breaks batched sends. Only dedupe when we can identify the
+    // device, so genuinely separate devices keep their own tokens.
+    if (deviceInfo.deviceId) {
+      const { error: dedupError } = await supabase
+        .from('push_tokens')
+        .update({ is_active: false })
+        .eq('user_id', userId)
+        .eq('device_id', deviceInfo.deviceId)
+        .neq('token', pushToken);
+
+      if (dedupError) {
+        console.error(`❌ Error deactivating old tokens for device:`, dedupError);
       }
     }
 
