@@ -651,7 +651,7 @@ export const scheduleInactiveUserAlerts = () => {
       // Get users with inactive alerts enabled
       const { data: users, error: usersError } = await supabase
         .from('notification_preferences')
-        .select('user_id, inactive_alert_threshold')
+        .select('user_id, inactive_alert_days')
         .eq('inactive_alert_enabled', true);
 
       if (usersError) {
@@ -663,7 +663,7 @@ export const scheduleInactiveUserAlerts = () => {
 
       for (const userPref of users || []) {
         try {
-          const inactiveThreshold = userPref.inactive_alert_threshold || 3; // Default 3 days
+          const inactiveThreshold = userPref.inactive_alert_days || 3; // Default 3 days
 
           // Get user's last completed workout via workout_plans JOIN
           const { data: lastWorkout, error: workoutError } = await supabase

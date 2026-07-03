@@ -457,7 +457,7 @@ export const checkQuietHours = async (userId) => {
   try {
     const { data: prefs, error } = await supabase
       .from('notification_preferences')
-      .select('quiet_hours_enabled, quiet_hours_start, quiet_hours_end')
+      .select('quiet_hours_enabled, quiet_hours_start, quiet_hours_end, timezone')
       .eq('user_id', userId)
       .single();
 
@@ -469,8 +469,21 @@ export const checkQuietHours = async (userId) => {
       return false;
     }
 
-    const now = new Date();
-    const currentTime = now.toTimeString().substring(0, 5); // HH:MM format
+    // Quiet-hours values are stored in the user's LOCAL time, so compare against
+    // the current time in the user's timezone — not the server clock (UTC on
+    // Render), which would evaluate quiet hours for every non-UTC user.
+    const tz = prefs.timezone || 'UTC';
+    const fmt = (zone) =>
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date());
+    let currentTime;
+    try {
+      currentTime = fmt(tz);
+    } catch {
+      currentTime = fmt('UTC'); // invalid timezone string → fall back to UTC
+    }
+    if (currentTime.startsWith('24')) currentTime = '00' + currentTime.slice(2); // midnight guard
 
     const start = prefs.quiet_hours_start.substring(0, 5);
     const end = prefs.quiet_hours_end.substring(0, 5);
