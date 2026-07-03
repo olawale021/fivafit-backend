@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js'
 import { notifyMutualFollowersActivityCompleted } from './notificationService.js'
+import { evaluateRunChallenges, evaluateStreak } from './challengeCatalogService.js'
 
 /**
  * Save a completed run
@@ -71,6 +72,15 @@ export const saveRun = async (userId, runData) => {
     }).catch(err => console.error('❌ Failed to notify followers:', err))
 
     console.log(`✅ Run saved: ${run.id} (${(distance_meters / 1000).toFixed(2)} km)`)
+
+    // Auto-evaluate curated challenges + streak (non-blocking, swallows its own errors)
+    evaluateRunChallenges(userId, run).catch(err =>
+      console.error('❌ evaluateRunChallenges (post-save):', err)
+    )
+    evaluateStreak(userId, run.started_at || run.finished_at || new Date()).catch(err =>
+      console.error('❌ evaluateStreak (post-save):', err)
+    )
+
     return { run, personalBests }
   } catch (error) {
     console.error('❌ Save run error:', error)
@@ -281,6 +291,7 @@ const checkPersonalBests = async (userId, run) => {
     const standardDistances = [
       { type: '400m', meters: 400 },
       { type: '1km', meters: 1000 },
+      { type: '1mi', meters: 1609.344 },
       { type: '5km', meters: 5000 },
       { type: '10km', meters: 10000 },
       { type: 'half_marathon', meters: 21097.5 },
@@ -317,7 +328,7 @@ const checkPersonalBests = async (userId, run) => {
         if (existingPB) {
           await supabase
             .from('personal_bests')
-            .update(pbData)
+            .update({ ...pbData, updated_at: new Date().toISOString() })
             .eq('id', existingPB.id)
 
           newPBs.push({
@@ -354,9 +365,31 @@ const checkPersonalBests = async (userId, run) => {
  * @returns {number|null} Time in seconds, or null if not enough data
  */
 const findFastestTimeForDistance = (run, targetMeters) => {
+  // Prefer km splits for whole-km targets. Split times are derived from the
+  // run's active elapsed clock, so they EXCLUDE paused time — unlike the raw
+  // GPS timestamps used below, which include pauses and would inflate a
+  // segment's time (a paused run could fail to set a PB it clearly earned).
+  // This mirrors the mobile client (findFastestTimeForDistanceClient) so the
+  // in-app PR preview and the persisted record always agree.
+  const splits = run.splits
+  const targetKm = Math.max(1, Math.round(targetMeters / 1000))
+  if (Array.isArray(splits) && splits.length >= targetKm && targetMeters % 1000 < 100) {
+    let best = Infinity
+    for (let i = 0; i + targetKm <= splits.length; i++) {
+      let sum = 0
+      for (let k = 0; k < targetKm; k++) sum += splits[i + k].time_seconds
+      if (sum < best) best = sum
+    }
+    if (best !== Infinity) return Math.round(best)
+  }
+
+  // Fallback for non-km distances (400m / 1mi / marathon) or runs without clean
+  // splits: fastest contiguous GPS segment. Uses wall-clock timestamps, so it
+  // may over-count when a run is paused mid-segment.
   const points = run.route_polyline
   if (!points || !Array.isArray(points) || points.length < 2) {
-    // Fallback: if run covers the distance, use proportional time
+    // Last resort: if the run covers the distance, use proportional time.
+    // duration_seconds is pause-corrected, so this stays fair for paused runs.
     if (run.distance_meters >= targetMeters && run.duration_seconds) {
       return (targetMeters / run.distance_meters) * run.duration_seconds
     }
