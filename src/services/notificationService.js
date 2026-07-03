@@ -570,6 +570,210 @@ export const createPersonalRecordNotification = async (userId, prs, runId) => {
 }
 
 /**
+ * Notify the user once when they cross their daily step goal.
+ * Fires only on the crossing (prevCount < goal <= newCount) so it doesn't
+ * re-send on every HealthKit sync.
+ * @param {string} userId
+ * @param {number} prevCount - step count stored before this update
+ * @param {number} newCount - step count after this update
+ */
+export const maybeNotifyStepGoalReached = async (userId, prevCount, newCount) => {
+  try {
+    const { data: user } = await supabase
+      .from('users')
+      .select('daily_step_goal')
+      .eq('id', userId)
+      .single()
+
+    const goal = user?.daily_step_goal
+    if (!goal || goal <= 0) return null
+    // Only the moment they cross the goal
+    if (!(prevCount < goal && newCount >= goal)) return null
+
+    const { data: notification, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: userId,
+        actor_id: null,
+        type: 'goal_reached',
+        notification_category: 'workout',
+        metadata: { goal_type: 'daily_steps', target: goal, value: newCount },
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    await sendPushNotification(userId, {
+      title: '🎯 Goal smashed!',
+      body: `You hit your ${goal.toLocaleString()}-step goal today. Keep moving!`,
+      data: {
+        type: 'goal_reached',
+        goalType: 'daily_steps',
+        screen: 'home',
+        notificationId: notification.id,
+      },
+      channelId: 'workout-notifications',
+    })
+
+    await supabase
+      .from('notifications')
+      .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+      .eq('id', notification.id)
+
+    await supabase.rpc('increment_unread_notifications', { user_id_param: userId })
+
+    console.log(`✅ Step goal notification created: ${notification.id}`)
+    return notification
+  } catch (error) {
+    console.error('❌ Step goal notification error:', error)
+    return null
+  }
+}
+
+/**
+ * Notify a user's mutual followers when they set a new personal record.
+ * One combined notification per run even when multiple distances PR'd.
+ * @param {string} userId - the achiever
+ * @param {Array} prs - new PBs from checkPersonalBests
+ * @param {string} runId - the run that set the record(s)
+ * @returns {Promise<number>} number of followers notified
+ */
+export const notifyFollowersOfPersonalRecord = async (userId, prs, runId) => {
+  if (!Array.isArray(prs) || prs.length === 0) return 0
+  try {
+    const mutualFollowerIds = await getMutualFollowers(userId)
+    if (mutualFollowerIds.length === 0) return 0
+
+    const { data: actor } = await supabase
+      .from('users')
+      .select('username, full_name')
+      .eq('id', userId)
+      .single()
+    const actorName = actor?.full_name || actor?.username || 'Someone'
+
+    const labels = prs.map((p) => PR_LABELS[p.distance_type] || p.distance_type)
+    const title =
+      prs.length === 1
+        ? `${actorName} set a new ${labels[0]} PR 🏅`
+        : `${actorName} set ${prs.length} new PRs 🏅`
+    const body =
+      prs.length === 1
+        ? `${formatPrTime(prs[0].time_seconds)} — send some 👏`
+        : `${labels.join(', ')} — send some 👏`
+
+    let sentCount = 0
+    for (const followerId of mutualFollowerIds) {
+      try {
+        const { data: notification, error } = await supabase
+          .from('notifications')
+          .insert({
+            user_id: followerId,
+            actor_id: userId,
+            type: 'friend_personal_record',
+            notification_category: 'social',
+            metadata: {
+              run_id: runId,
+              records: prs.map((p) => ({
+                distance_type: p.distance_type,
+                time_seconds: p.time_seconds,
+              })),
+            },
+          })
+          .select()
+          .single()
+
+        if (error) continue
+
+        await sendPushNotification(followerId, {
+          title,
+          body,
+          data: {
+            type: 'friend_personal_record',
+            actorId: userId,
+            runId,
+            screen: 'profile',
+            notificationId: notification.id,
+          },
+          channelId: 'social-notifications',
+        })
+
+        await supabase
+          .from('notifications')
+          .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+          .eq('id', notification.id)
+
+        await supabase.rpc('increment_unread_notifications', { user_id_param: followerId })
+
+        sentCount++
+      } catch (err) {
+        console.error(`❌ Failed to notify follower ${followerId} of PR:`, err)
+      }
+    }
+
+    console.log(`✅ Notified ${sentCount}/${mutualFollowerIds.length} followers of PR`)
+    return sentCount
+  } catch (error) {
+    console.error('❌ notifyFollowersOfPersonalRecord error:', error)
+    return 0
+  }
+}
+
+/**
+ * Send a user their weekly running recap (runs, distance, new PRs).
+ * @param {string} userId
+ * @param {{ runs: number, distanceMeters: number, newPRs: number }} stats
+ */
+export const createRunningRecapNotification = async (userId, stats) => {
+  try {
+    const km = (stats.distanceMeters / 1000).toFixed(1)
+    const prPart = stats.newPRs > 0 ? ` · ${stats.newPRs} new PR${stats.newPRs > 1 ? 's' : ''} 🏅` : ''
+
+    const { data: notification, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: userId,
+        actor_id: null,
+        type: 'running_recap',
+        notification_category: 'workout',
+        metadata: {
+          runs: stats.runs,
+          distance_meters: stats.distanceMeters,
+          new_prs: stats.newPRs,
+        },
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    await sendPushNotification(userId, {
+      title: '📊 Your running week',
+      body: `${stats.runs} run${stats.runs > 1 ? 's' : ''} · ${km} km${prPart}`,
+      data: {
+        type: 'running_recap',
+        screen: 'run-history',
+        notificationId: notification.id,
+      },
+      channelId: 'workout-notifications',
+    })
+
+    await supabase
+      .from('notifications')
+      .update({ push_sent: true, push_sent_at: new Date().toISOString() })
+      .eq('id', notification.id)
+
+    await supabase.rpc('increment_unread_notifications', { user_id_param: userId })
+
+    console.log(`✅ Running recap notification created: ${notification.id}`)
+    return notification
+  } catch (error) {
+    console.error('❌ Running recap notification error:', error)
+    return null
+  }
+}
+
+/**
  * Create weekly goal achieved notification
  * @param {string} userId - User ID
  * @param {Object} weekData - Week summary data

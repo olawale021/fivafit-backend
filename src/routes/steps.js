@@ -2,6 +2,7 @@ import express from 'express'
 import { authenticateToken } from '../middleware/auth.js'
 import { supabase } from '../config/supabase.js'
 import { syncUserCompletions } from '../services/challengeCatalogService.js'
+import { maybeNotifyStepGoalReached } from '../services/notificationService.js'
 
 const router = express.Router()
 
@@ -65,6 +66,14 @@ router.post('/daily', authenticateToken, async (req, res) => {
     syncUserCompletions(userId).catch((err) =>
       console.error('❌ step sync after daily save:', err)
     )
+
+    // Notify on crossing the daily step goal (non-blocking; only fires today's
+    // record and only the moment the goal is crossed).
+    if (date === new Date().toISOString().split('T')[0]) {
+      maybeNotifyStepGoalReached(userId, existing?.step_count || 0, finalCount).catch((err) =>
+        console.error('❌ step goal notify:', err)
+      )
+    }
 
     res.json({ success: true, data: { date, step_count: finalCount } })
   } catch (error) {

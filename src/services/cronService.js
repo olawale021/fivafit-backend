@@ -6,7 +6,8 @@ import {
   createMonthlyMilestoneNotification,
   createWeeklyReportNotification,
   createInactiveAlertNotification,
-  createRecoveryReminderNotification
+  createRecoveryReminderNotification,
+  createRunningRecapNotification
 } from './notificationService.js';
 
 /**
@@ -639,6 +640,81 @@ export const scheduleWeeklyProgressReport = () => {
 };
 
 /**
+ * Weekly Running Recap
+ * Runs every Sunday at 7 PM — sends each user their past-7-day running summary
+ * (runs, distance, new PRs). Reuses the weekly_report_enabled preference.
+ * Skips users with no runs that week.
+ */
+export const scheduleWeeklyRunningRecap = () => {
+  cron.schedule('0 19 * * 0', async () => {
+    console.log('🔔 [Cron] Generating weekly running recaps...');
+
+    try {
+      const now = new Date();
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - 7);
+      const weekStartIso = weekStart.toISOString();
+
+      const { data: users, error: usersError } = await supabase
+        .from('notification_preferences')
+        .select('user_id')
+        .eq('weekly_report_enabled', true);
+
+      if (usersError) {
+        console.error('❌ Error fetching users for running recap:', usersError);
+        return;
+      }
+
+      console.log(`Generating running recaps for ${users?.length || 0} users`);
+
+      for (const userPref of users || []) {
+        try {
+          // Runs in the last 7 days (exclude walks)
+          const { data: runs, error: runsError } = await supabase
+            .from('runs')
+            .select('distance_meters')
+            .eq('user_id', userPref.user_id)
+            .eq('status', 'completed')
+            .neq('activity_type', 'walk')
+            .gte('started_at', weekStartIso);
+
+          if (runsError) {
+            console.error(`❌ Error fetching runs for ${userPref.user_id}:`, runsError);
+            continue;
+          }
+
+          const runCount = runs?.length || 0;
+          if (runCount === 0) continue; // no runs this week — skip
+
+          const distanceMeters = runs.reduce((sum, r) => sum + (r.distance_meters || 0), 0);
+
+          // PRs set in the last 7 days
+          const { count: newPRs } = await supabase
+            .from('personal_bests')
+            .select('id', { count: 'exact', head: true })
+            .eq('user_id', userPref.user_id)
+            .gte('achieved_at', weekStartIso);
+
+          await createRunningRecapNotification(userPref.user_id, {
+            runs: runCount,
+            distanceMeters,
+            newPRs: newPRs || 0,
+          });
+        } catch (err) {
+          console.error(`❌ Error building recap for ${userPref.user_id}:`, err);
+        }
+      }
+
+      console.log('✅ [Cron] Weekly running recaps complete');
+    } catch (error) {
+      console.error('❌ [Cron] Weekly running recap error:', error);
+    }
+  });
+
+  console.log('✅ Weekly running recap cron job scheduled (runs every Sunday at 7 PM)');
+};
+
+/**
  * Inactive User Alert - Phase 3
  * Runs daily at 10 AM to check for inactive users (3+ days)
  */
@@ -945,6 +1021,7 @@ export const startCronJobs = (phase = 'phase1') => {
   if (phase === 'phase3' || phase === 'all') {
     console.log('📋 PHASE 3: Insights & Re-engagement');
     scheduleWeeklyProgressReport();
+    scheduleWeeklyRunningRecap();
     scheduleInactiveUserAlerts();
     scheduleRecoveryReminders();
     console.log('');
