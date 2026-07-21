@@ -1,6 +1,7 @@
 import express from 'express'
 import { authenticateToken } from '../middleware/auth.js'
 import { createRun, getRuns, getRun, getUserRuns, removeRun, stats, leaderboard } from '../controllers/runsController.js'
+import { createReplayVideo, getReplayVideoJob } from '../controllers/replayVideoController.js'
 import { supabase } from '../config/supabase.js'
 
 const router = express.Router()
@@ -19,11 +20,13 @@ router.get('/debug-table', authenticateToken, async (req, res) => {
 router.get('/stats', authenticateToken, stats)
 router.get('/leaderboard', authenticateToken, leaderboard)
 router.get('/user/:userId', authenticateToken, getUserRuns)
+router.get('/replay-video/jobs/:jobId', authenticateToken, getReplayVideoJob)
 
 // CRUD routes
 router.post('/', authenticateToken, createRun)
 router.get('/', authenticateToken, getRuns)
 router.get('/:id', authenticateToken, getRun)
 router.delete('/:id', authenticateToken, removeRun)
+router.post('/:id/replay-video', authenticateToken, createReplayVideo)
 
 export default router

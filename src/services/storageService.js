@@ -1,5 +1,6 @@
 import { supabase } from '../config/supabase.js'
 import crypto from 'crypto'
+import { promises as fsPromises } from 'fs'
 
 /**
  * Storage Service
@@ -279,5 +280,45 @@ export async function deleteAllUserScanImages(userId) {
   } catch (error) {
     console.error('Error in deleteAllUserScanImages:', error)
     return false
+  }
+}
+
+const RUN_VIDEOS_BUCKET = 'run-videos'
+
+/**
+ * Upload a rendered run replay video to Supabase Storage
+ * @param {string} filePath - Local path to the MP4 file
+ * @param {string} userId - User ID for organizing files
+ * @param {string} runId - Run ID the video belongs to
+ * @returns {string|null} - Public URL of uploaded video or null
+ */
+export async function uploadRunVideo(filePath, userId, runId) {
+  try {
+    const fileName = `${userId}/${runId}-${Date.now()}.mp4`
+    console.log(`📤 Uploading run video: ${fileName}`)
+
+    const fileBuffer = await fsPromises.readFile(filePath)
+    const { error } = await supabase.storage
+      .from(RUN_VIDEOS_BUCKET)
+      .upload(fileName, fileBuffer, {
+        contentType: 'video/mp4',
+        cacheControl: '31536000',
+        upsert: false
+      })
+
+    if (error) {
+      console.error('Error uploading run video:', error)
+      return null
+    }
+
+    const { data: urlData } = supabase.storage
+      .from(RUN_VIDEOS_BUCKET)
+      .getPublicUrl(fileName)
+
+    console.log(`✅ Run video uploaded: ${urlData.publicUrl}`)
+    return urlData.publicUrl
+  } catch (error) {
+    console.error('Error in uploadRunVideo:', error)
+    return null
   }
 }

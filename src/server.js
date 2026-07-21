@@ -260,6 +260,19 @@ app.listen(PORT, () => {
     // Still start Live Activity cron in dev if APNs is configured
     startLiveActivityCron()
   }
+
+  // Video rendering (3D run replay): warm the headless browser and recover jobs
+  if (process.env.VIDEO_RENDER_ENABLED === 'true') {
+    const mem = Math.round(os.totalmem() / 1024 / 1024)
+    console.log(`🎬 Video rendering enabled (${mem}MB RAM, ${os.cpus().length} CPU) — warming browser...`)
+    import('@remotion/renderer')
+      .then(({ ensureBrowser }) => ensureBrowser())
+      .then(() => console.log('🎬 Headless browser ready for video renders'))
+      .catch(err => console.error('❌ Browser warm-up failed:', err.message))
+    import('./services/videoRenderJobService.js')
+      .then(({ videoRenderJobService }) => videoRenderJobService.recoverOnBoot())
+      .catch(err => console.error('❌ Video job recovery failed:', err.message))
+  }
 })
 
 // Graceful shutdown
