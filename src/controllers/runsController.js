@@ -1,4 +1,4 @@
-import { saveRun, getRunHistory, getRunById, deleteRun, getRunStats, getLeaderboard } from '../services/runService.js'
+import { saveRun, getRunHistory, getRunById, deleteRun, getRunStats, getLeaderboard, getRunTimeseries } from '../services/runService.js'
 
 /**
  * POST /api/runs - Save a completed run
@@ -182,6 +182,20 @@ export const removeRun = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to delete run',
+      message: error.message,
+    })
+  }
+}
+
+export const timeseries = async (req, res) => {
+  try {
+    const data = await getRunTimeseries(req.user.id)
+    res.json({ success: true, data })
+  } catch (error) {
+    console.error('❌ Get run timeseries error:', error)
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch run timeseries',
       message: error.message,
     })
   }

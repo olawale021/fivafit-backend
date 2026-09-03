@@ -261,8 +261,8 @@ export async function getUserProgress(userId) {
       }
     }
 
-    // Format recent activity
-    const recentActivityFormatted = recentActivity.map(activity => ({
+    // Format recent activity: workouts + runs, merged by date
+    const workoutItems = recentActivity.map(activity => ({
       id: activity.id,
       type: 'workout',
       title: activity.daily_workouts?.workout_name || 'Workout',
@@ -272,6 +272,36 @@ export async function getUserProgress(userId) {
       difficulty: activity.difficulty_rating,
       energyLevel: activity.energy_level
     }))
+
+    const { data: recentRuns } = await supabase
+      .from('runs')
+      .select('id, started_at, distance_meters, duration_seconds, avg_pace_sec_km, activity_type')
+      .eq('user_id', userId)
+      .eq('status', 'completed')
+      .order('started_at', { ascending: false })
+      .limit(10)
+
+    const formatPace = (secKm) => {
+      if (!secKm) return null
+      const m = Math.floor(secKm / 60)
+      const s = Math.round(secKm % 60)
+      return `${m}:${String(s).padStart(2, '0')} /km`
+    }
+
+    const runItems = (recentRuns || []).map(run => ({
+      id: run.id,
+      type: run.activity_type === 'walk' ? 'walk' : 'run',
+      title: `${(run.distance_meters / 1000).toFixed(1)} km ${run.activity_type === 'walk' ? 'walk' : 'run'}`,
+      subtitle: [formatPace(run.avg_pace_sec_km), `${Math.round(run.duration_seconds / 60)} min`]
+        .filter(Boolean)
+        .join(' · '),
+      date: run.started_at,
+      duration: Math.round(run.duration_seconds / 60)
+    }))
+
+    const recentActivityFormatted = [...workoutItems, ...runItems]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 10)
 
     // Nutrition stats for display
     const nutritionDisplay = {

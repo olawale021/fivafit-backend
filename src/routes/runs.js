@@ -1,6 +1,6 @@
 import express from 'express'
 import { authenticateToken } from '../middleware/auth.js'
-import { createRun, getRuns, getRun, getUserRuns, removeRun, stats, leaderboard } from '../controllers/runsController.js'
+import { createRun, getRuns, getRun, getUserRuns, removeRun, stats, leaderboard, timeseries } from '../controllers/runsController.js'
 import { createReplayVideo, getReplayVideoJob } from '../controllers/replayVideoController.js'
 import { supabase } from '../config/supabase.js'
 
@@ -18,6 +18,7 @@ router.get('/debug-table', authenticateToken, async (req, res) => {
 
 // Specific routes before parameterized routes
 router.get('/stats', authenticateToken, stats)
+router.get('/timeseries', authenticateToken, timeseries)
 router.get('/leaderboard', authenticateToken, leaderboard)
 router.get('/user/:userId', authenticateToken, getUserRuns)
 router.get('/replay-video/jobs/:jobId', authenticateToken, getReplayVideoJob)

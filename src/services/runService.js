@@ -578,3 +578,124 @@ export const getLeaderboard = async (metric = 'total_distance', period = 'weekly
     throw error
   }
 }
+
+/**
+ * Bucketed distance time series for the running screen's volume panel.
+ * One query, three period groupings: last 8 weeks (Mon-start), last 8 months,
+ * last 12 months — each with current/previous period totals and a % delta.
+ */
+export const getRunTimeseries = async (userId) => {
+  try {
+    const { data: runs, error } = await supabase
+      .from('runs')
+      .select('distance_meters, duration_seconds, calories_burned, started_at')
+      .eq('user_id', userId)
+      .eq('status', 'completed')
+      .order('started_at', { ascending: false })
+
+    if (error) {
+      throw error
+    }
+
+    const all = runs || []
+    const now = new Date()
+
+    const weekStart = (d) => {
+      const x = new Date(d)
+      x.setHours(0, 0, 0, 0)
+      const day = (x.getDay() + 6) % 7 // Monday = 0
+      x.setDate(x.getDate() - day)
+      return x
+    }
+    const monthStart = (d) => new Date(d.getFullYear(), d.getMonth(), 1)
+    const yearStart = (d) => new Date(d.getFullYear(), 0, 1)
+
+    const sumRange = (from, to) => {
+      const acc = { distance_m: 0, runs: 0, duration_s: 0, calories: 0 }
+      for (const r of all) {
+        const t = new Date(r.started_at)
+        if (t >= from && t < to) {
+          acc.distance_m += r.distance_meters || 0
+          acc.runs += 1
+          acc.duration_s += r.duration_seconds || 0
+          acc.calories += r.calories_burned || 0
+        }
+      }
+      return acc
+    }
+
+    const deltaPct = (current, previous) => {
+      if (!previous.distance_m) return null
+      return Math.round(((current.distance_m - previous.distance_m) / previous.distance_m) * 100)
+    }
+
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    // Last 8 weeks
+    const thisWeek = weekStart(now)
+    const weekBuckets = []
+    for (let i = 7; i >= 0; i--) {
+      const from = new Date(thisWeek)
+      from.setDate(from.getDate() - i * 7)
+      const to = new Date(from)
+      to.setDate(to.getDate() + 7)
+      weekBuckets.push({
+        label: `${from.getDate()}/${from.getMonth() + 1}`,
+        distance_m: sumRange(from, to).distance_m,
+      })
+    }
+    const weekCurrent = sumRange(thisWeek, new Date(thisWeek.getTime() + 7 * 86400000))
+    const prevWeekStart = new Date(thisWeek)
+    prevWeekStart.setDate(prevWeekStart.getDate() - 7)
+    const weekPrevious = sumRange(prevWeekStart, thisWeek)
+
+    // Last 8 months
+    const thisMonth = monthStart(now)
+    const monthBuckets = []
+    for (let i = 7; i >= 0; i--) {
+      const from = new Date(thisMonth.getFullYear(), thisMonth.getMonth() - i, 1)
+      const to = new Date(from.getFullYear(), from.getMonth() + 1, 1)
+      monthBuckets.push({ label: MONTHS[from.getMonth()], distance_m: sumRange(from, to).distance_m })
+    }
+    const monthCurrent = sumRange(thisMonth, new Date(thisMonth.getFullYear(), thisMonth.getMonth() + 1, 1))
+    const monthPrevious = sumRange(
+      new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 1, 1),
+      thisMonth
+    )
+
+    // Last 12 months (year view)
+    const yearMonthBuckets = []
+    for (let i = 11; i >= 0; i--) {
+      const from = new Date(thisMonth.getFullYear(), thisMonth.getMonth() - i, 1)
+      const to = new Date(from.getFullYear(), from.getMonth() + 1, 1)
+      yearMonthBuckets.push({ label: MONTHS[from.getMonth()].charAt(0), distance_m: sumRange(from, to).distance_m })
+    }
+    const thisYear = yearStart(now)
+    const yearCurrent = sumRange(thisYear, new Date(thisYear.getFullYear() + 1, 0, 1))
+    const yearPrevious = sumRange(new Date(thisYear.getFullYear() - 1, 0, 1), thisYear)
+
+    return {
+      weekly: {
+        buckets: weekBuckets,
+        current: weekCurrent,
+        previous: weekPrevious,
+        delta_pct: deltaPct(weekCurrent, weekPrevious),
+      },
+      monthly: {
+        buckets: monthBuckets,
+        current: monthCurrent,
+        previous: monthPrevious,
+        delta_pct: deltaPct(monthCurrent, monthPrevious),
+      },
+      yearly: {
+        buckets: yearMonthBuckets,
+        current: yearCurrent,
+        previous: yearPrevious,
+        delta_pct: deltaPct(yearCurrent, yearPrevious),
+      },
+    }
+  } catch (error) {
+    console.error('❌ Get run timeseries error:', error)
+    throw error
+  }
+}

@@ -38,6 +38,7 @@ import ttsRoutes from './routes/tts.js'
 import guidedRunRoutes from './routes/guidedRun.js'
 import challengeCatalogRoutes from './routes/challengeCatalog.js'
 import stepsRoutes from './routes/steps.js'
+import recipesRoutes from './routes/recipes.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -176,6 +177,7 @@ app.use('/api/tts', ttsRoutes)
 app.use('/api/guided-run', guidedRunRoutes)
 app.use('/api/challenge-catalog', challengeCatalogRoutes)
 app.use('/api/steps', stepsRoutes)
+app.use('/api/recipes', recipesRoutes)
 
 // 404 handler
 app.use('*', (req, res) => {
